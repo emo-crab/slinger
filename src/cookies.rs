@@ -21,7 +21,7 @@ pub struct CookieStores {
 }
 
 impl CookieStores {
-  pub fn get_request_values(&self, url: &http::Uri) -> impl Iterator<Item = (&str, &str)> {
+  pub fn get_request_values(&self, url: &http::Uri) -> impl Iterator<Item=(&str, &str)> {
     self.matches(url).into_iter().map(|c| c.0.name_value())
   }
   pub fn insert(&mut self, cookie: Cookie<'static>, request_url: &http::Uri) {
@@ -43,7 +43,7 @@ impl CookieStores {
       .or_default()
       .insert(cookie.name().to_owned(), cookie);
   }
-  pub fn store_response_cookies<I: Iterator<Item = Cookie<'static>>>(
+  pub fn store_response_cookies<I: Iterator<Item=Cookie<'static>>>(
     &mut self,
     cookies: I,
     url: &http::Uri,
@@ -80,8 +80,8 @@ pub fn path_match(cookie_path: &str, request_url: &http::Uri) -> bool {
   let request_path = request_url.path();
   cookie_path == request_path
     || (request_path.starts_with(cookie_path)
-      && (cookie_path.ends_with('/')
-        || &request_path[cookie_path.len()..=cookie_path.len()] == "/"))
+    && (cookie_path.ends_with('/')
+    || &request_path[cookie_path.len()..=cookie_path.len()] == "/"))
 }
 
 fn is_http_scheme(url: &http::Uri) -> bool {
@@ -103,7 +103,7 @@ fn is_secure(url: &http::Uri) -> bool {
 }
 
 pub trait CookieStore: Debug {
-  fn set_cookies(&self, cookie_headers: &mut dyn Iterator<Item = &HeaderValue>, url: &http::Uri);
+  fn set_cookies(&self, cookie_headers: &mut dyn Iterator<Item=&HeaderValue>, url: &http::Uri);
   fn cookies(&self, url: &http::Uri) -> Option<HeaderValue>;
 }
 
@@ -170,7 +170,7 @@ impl<'a> Cookie<'a> {
 }
 
 impl CookieStore for Jar {
-  fn set_cookies(&self, cookie_headers: &mut dyn Iterator<Item = &HeaderValue>, url: &http::Uri) {
+  fn set_cookies(&self, cookie_headers: &mut dyn Iterator<Item=&HeaderValue>, url: &http::Uri) {
     let iter =
       cookie_headers.filter_map(|val| Cookie::parse(val).map(|c| Cookie(c.0.into_owned())).ok());
     self.0.write().unwrap().store_response_cookies(iter, url);
@@ -201,8 +201,5 @@ pub(crate) fn extract_response_cookie_headers(
 pub(crate) fn extract_response_cookies(
   headers: &http::HeaderMap,
 ) -> impl Iterator<Item=Result<Cookie, cookie::ParseError>> {
-  headers
-    .get_all(SET_COOKIE)
-    .iter()
-    .map(Cookie::parse)
+  headers.get_all(SET_COOKIE).iter().map(Cookie::parse)
 }

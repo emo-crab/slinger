@@ -9,8 +9,10 @@ fn main() {
     .connect_timeout(Some(timeout))
     .read_timeout(Some(timeout))
     .write_timeout(Some(timeout))
-    .build().unwrap()
-    .connect_with_addr(add).unwrap();
+    .build()
+    .unwrap()
+    .connect_with_addr(add)
+    .unwrap();
   socket.write_all(b"\r\n").unwrap();
   socket.flush().unwrap();
   let mut buf = [0u8; 1];

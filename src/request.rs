@@ -1,17 +1,18 @@
+#[cfg(feature = "serde")]
+use crate::body::bytes_serde;
 use crate::body::Body;
 use crate::response::parser_headers;
 use crate::{Client, Response, COLON_SPACE, CR_LF, SPACE};
 use bytes::Bytes;
 use http::Request as HttpRequest;
 use http::{HeaderMap, HeaderName, HeaderValue, Method, Version};
-#[cfg(feature = "serde")]
-use crate::body::bytes_serde;
+
 /// Send raw socket request
 #[derive(Debug, Default, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct RawRequest {
   unsafe_raw: bool,
-  #[cfg_attr(feature = "serde",serde(with = "bytes_serde"))]
+  #[cfg_attr(feature = "serde", serde(with = "bytes_serde"))]
   raw: Bytes,
 }
 

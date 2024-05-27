@@ -1,10 +1,10 @@
+#[cfg(feature = "tls")]
+use crate::errors::new_io_error;
 use crate::errors::Result;
 use crate::proxy::{Proxy, ProxySocket};
 use crate::socket::Socket;
 #[cfg(feature = "tls")]
 use native_tls::{HandshakeError, TlsConnector};
-#[cfg(feature = "tls")]
-use crate::errors::new_io_error;
 use socket2::Socket as RawSocket;
 use socket2::{Domain, Protocol, Type};
 use std::net::SocketAddr;

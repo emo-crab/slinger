@@ -1,5 +1,5 @@
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    #[cfg(feature = "tls")]
+  #[cfg(feature = "tls")]
   {
     use openssl::x509::X509;
     use slinger::ClientBuilder;

@@ -11,14 +11,14 @@ use bytes::Bytes;
 use http::{HeaderMap, HeaderValue, Method, StatusCode};
 #[cfg(feature = "tls")]
 use native_tls::{Certificate, Identity};
+#[cfg(feature = "tls")]
+use openssl::x509::X509;
 use std::collections::HashMap;
 use std::io::{BufReader, Write};
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
-#[cfg(feature = "tls")]
-use openssl::x509::X509;
 
 /// A `Client` to make Requests with.
 ///
@@ -233,7 +233,7 @@ impl Client {
   pub fn execute_request(&self, socket: &mut Socket, request: &Request) -> Result<Response> {
     let raw: Bytes = request.to_raw();
     #[cfg(feature = "tls")]
-    let mut certificate:Option<X509> = None;
+      let mut certificate: Option<X509> = None;
     #[cfg(feature = "tls")]
     {
       if let Some(x509) = socket.peer_certificate() {
@@ -310,8 +310,7 @@ impl Client {
       #[cfg(feature = "cookie")]
       {
         if let Some(ref cookie_store) = self.inner.cookie_store {
-          let mut cookies =
-            cookies::extract_response_cookie_headers(response.headers()).peekable();
+          let mut cookies = cookies::extract_response_cookie_headers(response.headers()).peekable();
           if cookies.peek().is_some() {
             cookie_store.set_cookies(&mut cookies, request.uri());
           }

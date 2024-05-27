@@ -99,7 +99,6 @@ impl fmt::Debug for Body {
   }
 }
 
-
 #[cfg(feature = "serde")]
 impl serde::Serialize for Body {
   fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
@@ -123,15 +122,15 @@ impl<'de> serde::Deserialize<'de> for Body {
 
 #[cfg(feature = "serde")]
 pub(crate) mod bytes_serde {
-  use serde::{Deserializer, Serializer};
   use bytes::Bytes;
+  use serde::{Deserializer, Serializer};
 
   pub fn serialize<S: Serializer>(v: &[u8], s: S) -> Result<S::Ok, S::Error> {
     s.serialize_bytes(v)
   }
 
   pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Bytes, D::Error> {
-    let bytes:Vec<u8> = serde::Deserialize::deserialize(d)?;
+    let bytes: Vec<u8> = serde::Deserialize::deserialize(d)?;
     Ok(Bytes::from(bytes))
   }
 }

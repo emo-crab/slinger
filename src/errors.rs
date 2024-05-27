@@ -1,12 +1,14 @@
 //! engine error
 
-use std::io::ErrorKind;
-use std::num::ParseIntError;
 #[cfg(feature = "tls")]
 use socket2::Socket;
+use std::io::ErrorKind;
+use std::num::ParseIntError;
 use thiserror::Error as ThisError;
+
 /// A `Result` alias where the `Err` case is `slinger::Error`.
 pub type Result<T> = std::result::Result<T, Error>;
+
 /// The Errors that may occur when processing a `slinger`.
 #[derive(ThisError, Debug)]
 pub enum Error {
