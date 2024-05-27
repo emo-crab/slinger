@@ -194,7 +194,7 @@ impl Response {
   ///     .body("possibly too large")
   ///     .send()?;
   ///
-  /// match resp.status() {
+  /// match resp.status_code() {
   ///     StatusCode::OK => println!("success!"),
   ///     StatusCode::PAYLOAD_TOO_LARGE => {
   ///         println!("Request payload is too large!");
@@ -228,7 +228,7 @@ impl Response {
   /// let client = Client::new();
   ///
   /// let mut resp = client.get("http://httpbin.org/cache").send()?;
-  /// if resp.status().is_success() {
+  /// if resp.status_code().is_success() {
   ///     if let Some(etag) = resp.headers().get(ETAG) {
   ///         std::fs::write("etag", etag.as_bytes());
   ///     }
@@ -265,7 +265,7 @@ impl Response {
   /// ```rust
   /// # fn run() -> Result<(), Box<dyn std::error::Error>> {
   /// let resp = slinger::get("http://httpbin.org/redirect/1")?;
-  /// assert_eq!(resp.uri().as_str(), "http://httpbin.org/get");
+  /// assert_eq!(resp.uri().to_string().as_str(), "http://httpbin.org/get");
   /// # Ok(())
   /// # }
   /// ```
@@ -297,9 +297,9 @@ impl Response {
   ///
   /// ```
   /// # fn run() -> Result<(), Box<dyn std::error::Error>> {
-  /// let bytes = slinger::get("http://httpbin.org/ip")?.body()?;
-  ///
-  /// println!("bytes: {bytes:?}");
+  /// let resp = slinger::get("http://httpbin.org/ip")?;
+  /// let body = resp.body();
+  /// println!("bytes: {body:?}");
   /// # Ok(())
   /// # }
   /// ```

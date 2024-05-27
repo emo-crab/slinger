@@ -517,16 +517,11 @@ impl ClientBuilder {
   /// # Example
   ///
   /// ```rust
-  /// # fn doc() -> Result<(), slinger::Error> {
-  /// // Name your user agent after your app?
-  /// static APP_USER_AGENT: &str = concat!(
-  ///     env!("CARGO_PKG_NAME"),
-  ///     "/",
-  ///     env!("CARGO_PKG_VERSION"),
-  /// );
-  ///
+  /// # use http::HeaderValue;
+  /// fn doc() -> Result<(), slinger::Error> {
+  /// let ua = HeaderValue::from_static("XX_UA");
   /// let client = slinger::Client::builder()
-  ///     .user_agent(APP_USER_AGENT)
+  ///     .user_agent(ua)
   ///     .build()?;
   /// let res = client.get("https://www.rust-lang.org").send()?;
   /// # Ok(())
