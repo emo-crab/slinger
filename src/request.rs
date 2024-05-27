@@ -3,14 +3,16 @@ use crate::response::parser_headers;
 use crate::{Client, Response, COLON_SPACE, CR_LF, SPACE};
 use bytes::Bytes;
 use http::Request as HttpRequest;
-use http::{HeaderMap, HeaderName, HeaderValue, Method, Uri, Version};
-
+use http::{HeaderMap, HeaderName, HeaderValue, Method, Version};
+#[cfg(feature = "serde")]
+use crate::body::bytes_serde;
 /// Send raw socket request
 #[derive(Debug, Default, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct RawRequest {
   unsafe_raw: bool,
-  raw: Vec<u8>,
+  #[cfg_attr(feature = "serde",serde(with = "bytes_serde"))]
+  raw: Bytes,
 }
 
 /// A request which can be executed with `Client::execute()`.
@@ -18,7 +20,7 @@ pub struct RawRequest {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Request {
   #[cfg_attr(feature = "serde", serde(with = "http_serde::uri"))]
-  uri: Uri,
+  uri: http::Uri,
   #[cfg_attr(feature = "serde", serde(with = "http_serde::version"))]
   version: Version,
   #[cfg_attr(feature = "serde", serde(with = "http_serde::method"))]
@@ -30,8 +32,8 @@ pub struct Request {
 }
 
 impl<T> From<HttpRequest<T>> for Request
-where
-  T: Into<Body>,
+  where
+    T: Into<Body>,
 {
   fn from(value: HttpRequest<T>) -> Self {
     let (parts, body) = value.into_parts();
@@ -50,7 +52,7 @@ where
 impl Request {
   pub(crate) fn to_raw(&self) -> Bytes {
     if let Some(raw) = &self.raw_request {
-      return Bytes::from(raw.raw.clone());
+      return raw.raw.clone();
     }
     let mut http_requests = Vec::new();
     // 请求头
@@ -144,7 +146,7 @@ impl Request {
   }
   /// Get the HTTP Method for this request.
   ///
-  /// By default this is `GET`. If builder has error, returns None.
+  /// By default, this is `GET`. If builder has error, returns None.
   ///
   /// # Examples
   ///
@@ -332,11 +334,11 @@ impl RequestBuilder {
   }
   /// Add a `Header` to this Request.
   pub fn header<K, V>(mut self, key: K, value: V) -> RequestBuilder
-  where
-    HeaderName: TryFrom<K>,
-    HeaderValue: TryFrom<V>,
-    <HeaderName as TryFrom<K>>::Error: Into<http::Error>,
-    <HeaderValue as TryFrom<V>>::Error: Into<http::Error>,
+    where
+      HeaderName: TryFrom<K>,
+      HeaderValue: TryFrom<V>,
+      <HeaderName as TryFrom<K>>::Error: Into<http::Error>,
+      <HeaderValue as TryFrom<V>>::Error: Into<http::Error>,
   {
     self.builder = self.builder.header(key, value);
     self
@@ -353,7 +355,7 @@ impl RequestBuilder {
   /// Add a set of Headers to the existing ones on this Request.
   ///
   /// The headers will be merged in to any already set.
-  pub fn headers(mut self, headers: http::header::HeaderMap) -> RequestBuilder {
+  pub fn headers(mut self, headers: HeaderMap) -> RequestBuilder {
     if let Some(header) = self.builder.headers_mut() {
       for (key, value) in headers {
         if let Some(key) = key {
@@ -372,7 +374,7 @@ impl RequestBuilder {
   pub fn raw<R: Into<Bytes>>(mut self, raw: R, unsafe_raw: bool) -> RequestBuilder {
     self.raw = Some(RawRequest {
       unsafe_raw,
-      raw: raw.into().to_vec(),
+      raw: raw.into(),
     });
     self
   }

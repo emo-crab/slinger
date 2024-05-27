@@ -104,13 +104,12 @@ impl Response {
 
   /// 获取编码并且尝试解码
   #[cfg(feature = "charset")]
-  fn text_with_charset(&self) -> Result<String> {
+  pub fn text_with_charset(&self, default_encoding: &str) -> Result<String> {
     let body = if let Some(b) = self.body() {
       b
     } else {
       return Ok(String::new());
     };
-    let default_encoding = String::from("utf-8");
     let content_type = self
       .headers
       .get(http::header::CONTENT_TYPE)
@@ -156,7 +155,8 @@ impl Response {
   pub fn text(&self) -> Result<String> {
     #[cfg(feature = "charset")]
     {
-      self.text_with_charset()
+      let default_encoding = "utf-8";
+      self.text_with_charset(default_encoding)
     }
     #[cfg(not(feature = "charset"))]
     Ok(String::from_utf8_lossy(&self.body().clone().unwrap_or_default()).to_string())
