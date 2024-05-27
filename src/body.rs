@@ -102,20 +102,36 @@ impl fmt::Debug for Body {
 
 #[cfg(feature = "serde")]
 impl serde::Serialize for Body {
-  fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+  fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
       S: serde::Serializer,
   {
     serializer.serialize_bytes(&self.inner)
   }
 }
+
 #[cfg(feature = "serde")]
 impl<'de> serde::Deserialize<'de> for Body {
-  fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+  fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
       D: serde::Deserializer<'de>,
   {
     let s = Vec::deserialize(deserializer)?;
     Ok(Body::from(s))
+  }
+}
+
+#[cfg(feature = "serde")]
+pub(crate) mod bytes_serde {
+  use serde::{Deserializer, Serializer};
+  use bytes::Bytes;
+
+  pub fn serialize<S: Serializer>(v: &[u8], s: S) -> Result<S::Ok, S::Error> {
+    s.serialize_bytes(v)
+  }
+
+  pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Bytes, D::Error> {
+    let bytes:Vec<u8> = serde::Deserialize::deserialize(d)?;
+    Ok(Bytes::from(bytes))
   }
 }
