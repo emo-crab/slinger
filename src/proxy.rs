@@ -375,7 +375,7 @@ fn default_port(uri: &http::Uri) -> Option<u16> {
 
 /// A SOCKS5 client.
 ///
-/// For convenience, it can be dereferenced to it's inner socket.
+/// For convenience, it can be dereferenced to its inner socket.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Socket5Proxy {
   host: String,

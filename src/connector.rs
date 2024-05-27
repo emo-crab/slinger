@@ -118,7 +118,7 @@ impl ConnectorBuilder {
       write_timeout: self.write_timeout,
       proxy: self.proxy.clone(),
       #[cfg(feature = "tls")]
-      tls: tls,
+      tls,
     };
     Ok(conn)
   }
@@ -144,7 +144,8 @@ impl PartialEq for Connector {
 
 impl Connector {
   /// Connect to a remote endpoint with addr
-  pub fn connect_with_addr(&self, addr: SocketAddr) -> Result<Socket> {
+  pub fn connect_with_addr<S: Into<SocketAddr>>(&self, addr: S) -> Result<Socket> {
+    let addr = addr.into();
     let socket = RawSocket::new(Domain::for_address(addr), Type::STREAM, Some(Protocol::TCP))?;
     if self.nodelay {
       socket.set_nodelay(self.nodelay)?;
