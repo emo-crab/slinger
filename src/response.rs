@@ -118,7 +118,7 @@ impl Response {
     let header_encoding = content_type
       .as_ref()
       .and_then(|mime| mime.get_param("charset").map(|charset| charset.as_str()))
-      .unwrap_or(&default_encoding);
+      .unwrap_or(default_encoding);
     let mut decode_text = String::new();
     for encoding_name in &[header_encoding, &default_encoding] {
       let encoding = Encoding::for_label(encoding_name.as_bytes()).unwrap_or(UTF_8);
