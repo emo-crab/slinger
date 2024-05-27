@@ -117,10 +117,13 @@ pub use client::{Client, ClientBuilder};
 pub use connector::{Connector, ConnectorBuilder};
 pub use errors::{Error, Result};
 pub use http::header;
+pub use http::uri;
 pub use http::Method;
 pub use http::{StatusCode, Version};
 #[cfg(feature = "tls")]
-pub use native_tls::{Certificate, Identity};
+pub use native_tls;
+#[cfg(feature = "tls")]
+pub use openssl;
 pub use proxy::Proxy;
 pub use record::HTTPRecord;
 pub use request::{Request, RequestBuilder};
@@ -147,9 +150,9 @@ pub use socket::Socket;
 /// ```
 ///
 pub fn get<U>(url: U) -> errors::Result<Response>
-where
-  http::Uri: TryFrom<U>,
-  <http::Uri as TryFrom<U>>::Error: Into<http::Error>,
+  where
+    http::Uri: TryFrom<U>,
+    <http::Uri as TryFrom<U>>::Error: Into<http::Error>,
 {
   Client::builder().build()?.get(url).send()
 }

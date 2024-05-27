@@ -7,6 +7,7 @@ use crate::{Error, COLON_SPACE, CR_LF, SPACE};
 use bytes::Bytes;
 #[cfg(feature = "charset")]
 use encoding_rs::{Encoding, UTF_8};
+#[cfg(feature = "gzip")]
 use flate2::read::MultiGzDecoder;
 use http::Response as HttpResponse;
 #[cfg(feature = "charset")]
@@ -419,6 +420,7 @@ impl<T: Read> ResponseBuilder<T> {
     } else {
       self.reader.read_to_end(&mut body)?;
     }
+    #[cfg(feature = "gzip")]
     if let Some(ce) = header.get(http::header::CONTENT_ENCODING) {
       if ce == "gzip" {
         let mut gzip_body = Vec::new();
