@@ -1,5 +1,6 @@
 use http::header::{AUTHORIZATION, COOKIE, PROXY_AUTHORIZATION, WWW_AUTHENTICATE};
 use http::{HeaderMap, StatusCode};
+
 /// A type that controls the policy on how to handle the following of redirects.
 ///
 /// The default value will catch redirect loops, and has a maximum of 10
@@ -11,13 +12,14 @@ use http::{HeaderMap, StatusCode};
 /// - `custom` can be used to create a customized policy.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Policy {
-  /// - `custom` can be used to create a customized policy. see `only_same_origin`.
+  /// - `custom` can be used to create a customized policy. see [only_same_host].
   Custom(fn(Attempt) -> Action),
   /// - `limited` can be used have the same as the default behavior, but adjust
   Limit(usize),
   /// - `none` can be used to disable all redirect behavior.
   None,
 }
+
 /// A type that holds information on the next request and previous requests
 /// in redirect chain.
 #[derive(Clone, Debug, PartialEq)]
@@ -26,6 +28,7 @@ pub struct Attempt<'a> {
   next: &'a http::Uri,
   previous: &'a [http::Uri],
 }
+
 /// An action to perform when a redirect status code is found.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Action {
@@ -150,8 +153,9 @@ impl<'a> Attempt<'a> {
     Action::Stop
   }
 }
-/// only_same_origin
-pub fn only_same_origin(attempt: Attempt) -> Action {
+
+/// only_same_host
+pub fn only_same_host(attempt: Attempt) -> Action {
   if let Some(p) = attempt.previous().last() {
     // 如果上一个链接的主机和当前主机一样可以跟随跳转
     if p.host() == attempt.url().host() {

@@ -2,7 +2,7 @@
 use crate::cookies;
 use crate::errors::{new_io_error, Result};
 use crate::proxy::Proxy;
-use crate::record::{HTTPRecord, HttpInfo};
+use crate::record::{HTTPRecord, LocalPeerRecord, RedirectRecord};
 use crate::redirect::{remove_sensitive_headers, Action, Policy};
 use crate::response::{ResponseBuilder, ResponseConfig};
 use crate::socket::Socket;
@@ -298,12 +298,12 @@ impl Client {
       if let (Ok(remote_addr), Ok(local_addr)) = (socket.peer_addr(), socket.local_addr()) {
         response
           .extensions_mut()
-          .insert(HttpInfo::new(remote_addr, local_addr));
+          .insert(LocalPeerRecord { remote_addr, local_addr });
       };
-      record.record_response(&response);
-      records.push(record);
       // 原始请求不跳转
       if request.raw_request().is_some() {
+        record.record_response(&response);
+        records.push(record);
         break;
       }
       // 保存请求头的cookie
@@ -316,7 +316,8 @@ impl Client {
           }
         }
       }
-      // 根据状态码判断是否应该跳转
+      // 根据状态码判断是否应该跳转,并清除一些请求头信息
+      // Determine whether to redirect on the status code and clear request header
       let should_redirect = match response.status_code() {
         StatusCode::MOVED_PERMANENTLY | StatusCode::FOUND | StatusCode::SEE_OTHER => {
           for header in &[
@@ -325,7 +326,7 @@ impl Client {
             http::header::CONTENT_TYPE,
             http::header::CONTENT_LENGTH,
           ] {
-            response.headers_mut().remove(header);
+            request.headers_mut().remove(header);
           }
           match request.method() {
             &Method::GET | &Method::HEAD => {}
@@ -335,12 +336,13 @@ impl Client {
           }
           true
         }
-        StatusCode::TEMPORARY_REDIRECT | StatusCode::PERMANENT_REDIRECT => match response.body() {
+        StatusCode::TEMPORARY_REDIRECT | StatusCode::PERMANENT_REDIRECT => match request.body() {
           Some(body) => body.is_empty(),
           None => true,
         },
         _ => false,
       };
+      let mut redirect_info = RedirectRecord { should_redirect, next: None };
       // 如果要跳转，获取进入跳转策略流程
       if should_redirect {
         // 在请求头获取下一跳URL
@@ -361,6 +363,8 @@ impl Client {
                 .ok()
             }
           });
+        redirect_info.next = loc.clone();
+        response.extensions_mut().insert(redirect_info);
         // 清除来源
         if let Some(loc) = loc {
           if self.inner.referer {
@@ -384,14 +388,20 @@ impl Client {
                 http::Uri::from_str(&cur_uri.to_string()).map_err(http::Error::from)?;
               let mut headers = std::mem::replace(response.headers_mut(), HeaderMap::new());
               remove_sensitive_headers(&mut headers, &cur_uri, uris.as_slice());
+              record.record_response(&response);
+              records.push(record);
               continue;
             }
             Action::Stop => {
+              record.record_response(&response);
+              records.push(record);
               break;
             }
           }
         }
       }
+      record.record_response(&response);
+      records.push(record);
       break;
     }
     for (_key, socket) in conn {
@@ -411,7 +421,7 @@ impl Client {
 }
 
 #[cfg(feature = "cookie")]
-#[cfg_attr(docsrs, doc(cfg(feature = "cookies")))]
+#[cfg_attr(docsrs, doc(cfg(feature = "cookie")))]
 fn add_cookie_header(request: &mut Request, cookie_store: &dyn cookies::CookieStore) {
   if let Some(header) = cookie_store.cookies(request.uri()) {
     request.headers_mut().insert(http::header::COOKIE, header);
@@ -638,7 +648,7 @@ impl ClientBuilder {
   /// let der = std::fs::read("my-cert.der")?;
   ///
   /// // create a certificate
-  /// let cert = slinger::Certificate::from_der(&der)?;
+  /// let cert = slinger::native_tls::Certificate::from_der(&der)?;
   ///
   /// // get a client builder
   /// let client = slinger::Client::builder()
@@ -651,7 +661,7 @@ impl ClientBuilder {
   ///
   /// # Optional
   ///
-  /// This requires the optional `default-tls`, `native-tls`, or `rustls-tls(-...)`
+  /// This requires the optional `tls`(-...)`
   /// feature to be enabled.
   pub fn add_root_certificate(mut self, cert: Certificate) -> ClientBuilder {
     self.config.root_certs.push(cert);
@@ -662,7 +672,7 @@ impl ClientBuilder {
   ///
   /// # Optional
   ///
-  /// This requires the optional `native-tls`
+  /// This requires the optional `tls`
   pub fn identity(mut self, identity: Identity) -> ClientBuilder {
     self.config.identity = Some(identity);
     self
@@ -680,7 +690,7 @@ impl ClientBuilder {
   ///
   /// # Optional
   ///
-  /// This requires the optional `native-tls` feature to be enabled.
+  /// This requires the optional `tls` feature to be enabled.
   pub fn danger_accept_invalid_hostnames(mut self, accept_invalid_hostname: bool) -> ClientBuilder {
     self.config.hostname_verification = !accept_invalid_hostname;
     self
@@ -715,9 +725,9 @@ impl ClientBuilder {
   /// By default, no cookie store is used. Enabling the cookies
   /// # Optional
   ///
-  /// This requires the optional `cookies` feature to be enabled.
+  /// This requires the optional `cookie` feature to be enabled.
   #[cfg(feature = "cookie")]
-  #[cfg_attr(docsrs, doc(cfg(feature = "cookies")))]
+  #[cfg_attr(docsrs, doc(cfg(feature = "cookie")))]
   pub fn cookie_store(mut self, enable: bool) -> ClientBuilder {
     if enable {
       self.cookie_provider(Arc::new(cookies::Jar::default()))
@@ -737,7 +747,7 @@ impl ClientBuilder {
   ///
   /// This requires the optional `cookies` feature to be enabled.
   #[cfg(feature = "cookie")]
-  #[cfg_attr(docsrs, doc(cfg(feature = "cookies")))]
+  #[cfg_attr(docsrs, doc(cfg(feature = "cookie")))]
   pub fn cookie_provider<C: cookies::CookieStore + 'static>(
     mut self,
     cookie_store: Arc<C>,

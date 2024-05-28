@@ -1,28 +1,25 @@
 use crate::{Request, Response};
 use bytes::Bytes;
 use socket2::SockAddr;
-use std::net::SocketAddr;
 
+/// http peer_addr and local_addr
 #[derive(Clone, Debug)]
-pub struct HttpInfo {
-  remote_addr: SockAddr,
-  local_addr: SockAddr,
+pub struct LocalPeerRecord {
+  /// peer_addr
+  pub remote_addr: SockAddr,
+  /// local_addr
+  pub local_addr: SockAddr,
 }
 
-impl HttpInfo {
-  pub fn new(remote_addr: SockAddr, local_addr: SockAddr) -> Self {
-    HttpInfo {
-      remote_addr,
-      local_addr,
-    }
-  }
-  pub fn remote_addr(&self) -> Option<SocketAddr> {
-    self.remote_addr.as_socket()
-  }
-  pub fn local_addr(&self) -> Option<SocketAddr> {
-    self.local_addr.as_socket()
-  }
+/// redirect info
+#[derive(Clone, Debug)]
+pub struct RedirectRecord {
+  /// should_redirect
+  pub should_redirect: bool,
+  /// the next redirect url
+  pub next: Option<http::Uri>,
 }
+
 /// HTTPRecord
 #[derive(Debug, Default, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]

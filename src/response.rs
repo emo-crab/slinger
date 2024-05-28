@@ -2,7 +2,7 @@ use crate::body::Body;
 #[cfg(feature = "cookie")]
 use crate::cookies;
 use crate::errors::Result;
-use crate::record::HttpInfo;
+use crate::record::{HTTPRecord, LocalPeerRecord, RedirectRecord};
 use crate::{Error, COLON_SPACE, CR_LF, SPACE};
 use bytes::Bytes;
 #[cfg(feature = "charset")]
@@ -96,9 +96,9 @@ impl Response {
   ///
   /// # Optional
   ///
-  /// This requires the optional `cookies` feature to be enabled.
+  /// This requires the optional `cookie` feature to be enabled.
   #[cfg(feature = "cookie")]
-  #[cfg_attr(docsrs, doc(cfg(feature = "cookies")))]
+  #[cfg_attr(docsrs, doc(cfg(feature = "cookie")))]
   pub fn cookies(&self) -> impl Iterator<Item=cookies::Cookie> {
     cookies::extract_response_cookies(&self.headers).filter_map(|x| x.ok())
   }
@@ -278,20 +278,6 @@ impl Response {
   pub(crate) fn url_mut(&mut self) -> &mut http::Uri {
     &mut self.uri
   }
-  /// Get the remote address used to get this `Response`.
-  ///
-  /// # Example
-  ///
-  /// ```rust
-  /// # fn run() -> Result<(), Box<dyn std::error::Error>> {
-  /// let resp = slinger::get("http://httpbin.org/redirect/1")?;
-  /// println!("httpbin.org address: {:?}", resp.remote_addr());
-  /// # Ok(())
-  /// # }
-  /// ```
-  pub fn remote_addr(&self) -> Option<&HttpInfo> {
-    self.extensions().get::<HttpInfo>()
-  }
   /// Get the full response body as `Bytes`.
   ///
   /// # Example
@@ -318,6 +304,52 @@ impl Response {
   /// Returns a mutable reference to the associated extensions.
   pub fn extensions_mut(&mut self) -> &mut http::Extensions {
     &mut self.extensions
+  }
+}
+
+/// 放一些响应中间过程记录，存起来方便获取
+impl Response {
+  /// Get the remote address used to get this `Response`.
+  ///
+  /// # Example
+  ///
+  /// ```rust
+  /// # fn run() -> Result<(), Box<dyn std::error::Error>> {
+  /// let resp = slinger::get("http://httpbin.org/redirect/1")?;
+  /// println!("httpbin.org address: {:?}", resp.local_peer_record());
+  /// # Ok(())
+  /// # }
+  /// ```
+  pub fn local_peer_record(&self) -> Option<&LocalPeerRecord> {
+    self.extensions().get::<LocalPeerRecord>()
+  }
+  /// Get the http record used to get this `Response`.
+  ///
+  /// # Example
+  ///
+  /// ```rust
+  /// # fn run() -> Result<(), Box<dyn std::error::Error>> {
+  /// let resp = slinger::get("http://httpbin.org/redirect/1")?;
+  /// println!("httpbin.org http: {:?}", resp.http_record());
+  /// # Ok(())
+  /// # }
+  /// ```
+  pub fn http_record(&self) -> Option<&Vec<HTTPRecord>> {
+    self.extensions().get::<Vec<HTTPRecord>>()
+  }
+  /// Get the redirect record used to get this `Response`.
+  ///
+  /// # Example
+  ///
+  /// ```rust
+  /// # fn run() -> Result<(), Box<dyn std::error::Error>> {
+  /// let resp = slinger::get("http://httpbin.org/redirect-to?url=http://www.example.com/")?;
+  /// println!("httpbin.org redirect: {:?}", resp.redirect_record());
+  /// # Ok(())
+  /// # }
+  /// ```
+  pub fn redirect_record(&self) -> Option<&RedirectRecord> {
+    self.extensions().get::<RedirectRecord>()
   }
 }
 

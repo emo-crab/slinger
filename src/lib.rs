@@ -84,9 +84,9 @@
 //! HTTPS destinations.
 //!
 //! - Additional server certificates can be configured on a `ClientBuilder`
-//!   with the [`Certificate`] type.
+//!   with the [`native_tls::Certificate`] type.
 //! - Client certificates can be added to a `ClientBuilder` with the
-//!   [`Identity`] type.
+//!   [`native_tls::Identity`] type.
 //! - Various parts of TLS can also be configured or even disabled on the
 //!   `ClientBuilder`.
 //!
@@ -96,7 +96,10 @@
 //! enabled or disabled:
 //!
 //! - **charset**: Improved support for decoding text.
-//! - **cookies**: Provides cookie session support.
+//! - **cookie**: Provides cookie session support.
+//! - **tls**: Provides https support.
+//! - **serde**: Provides serialization and deserialization support.
+//! - **gzip**: Provides response body gzip decompression.
 //!
 mod body;
 mod client;
@@ -105,7 +108,8 @@ mod connector;
 mod cookies;
 mod errors;
 mod proxy;
-mod record;
+/// record info
+pub mod record;
 /// Redirect Handling
 pub mod redirect;
 mod request;
@@ -125,7 +129,6 @@ pub use native_tls;
 #[cfg(feature = "tls")]
 pub use openssl;
 pub use proxy::Proxy;
-pub use record::HTTPRecord;
 pub use request::{Request, RequestBuilder};
 pub use response::{Response, ResponseBuilder, ResponseConfig};
 pub use socket::Socket;

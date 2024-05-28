@@ -1,4 +1,5 @@
-use slinger::{ClientBuilder, HTTPRecord};
+use slinger::ClientBuilder;
+use slinger::record::HTTPRecord;
 use std::io::BufRead;
 
 /// CVE-2020-11724
