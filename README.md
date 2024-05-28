@@ -32,7 +32,7 @@
 <br />
 <div align="center">
   <a href="https://github.com/emo-crab/slinger">
-    <img src="images/logo.png" alt="Logo" width="80" height="80">
+    <img src="images/logo.svg" alt="Logo">
   </a>
 
 <h3 align="center">slinger(投石器)</h3>
@@ -55,12 +55,13 @@
 
 ## About The Project
 
-[![Product Name Screen Shot][product-screenshot]](https://example.com)
+![Product Name Screen Shot][product-screenshot]
 
 - customizable redirect policy
 - http/https and socks5/socks5h proxies
 - cookie store
 - raw socket request
+- HTTPS via tls
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -74,7 +75,7 @@ This example enables some optional features, so your `Cargo.toml` could look lik
 
 ```toml
 [dependencies]
-slinger = { version = "0.1.0", features = ["cookies", "charset"] }
+slinger = { version = "0.1.0", features = ["serde", "cookie", "charset", "tls", "gzip"] }
 ```
 
 And then the code:
@@ -92,6 +93,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 ## Example
 
 - Nginx - Http Smuggling [CVE-2019-20372](https://scap.kali-team.cn/cve/CVE-2020-11724)
+
 ```rust
 use std::io::BufRead;
 use slinger::{ClientBuilder, HTTPRecord};
@@ -180,14 +182,9 @@ Project Link: [https://github.com/emo-crab/slinger](https://github.com/emo-crab/
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
-
-
 <!-- ACKNOWLEDGMENTS -->
 
 ## Acknowledgments
-
-Use this space to list resources you find helpful and would like to give credit to. I've included a few of my favorites
-to kick things off!
 
 * [reqwest](https://github.com/seanmonstar/reqwest)
 
