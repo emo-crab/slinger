@@ -295,11 +295,27 @@ impl Client {
         .entry(uniq_key(&cur_uri))
         .or_insert(self.inner.connector.connect_with_uri(&cur_uri)?);
       let mut response = self.execute_request(socket, &request)?;
+      response.extensions_mut().insert(request.clone());
       if let (Ok(remote_addr), Ok(local_addr)) = (socket.peer_addr(), socket.local_addr()) {
         response
           .extensions_mut()
           .insert(LocalPeerRecord { remote_addr, local_addr });
       };
+      if let Some(cv) = response.headers().get(http::header::CONNECTION) {
+        match cv.to_str().unwrap_or_default() {
+          "close" => {
+            conn.remove(&uniq_key(&cur_uri));
+          }
+          "keep-alive" => {
+            if let Some(s) = conn.get_mut(&uniq_key(&cur_uri)) {
+              if s.peer_addr().is_err() {
+                *s = self.inner.connector.connect_with_uri(&cur_uri)?;
+              }
+            }
+          }
+          _ => {}
+        }
+      }
       // 原始请求不跳转
       if request.raw_request().is_some() {
         record.record_response(&response);
