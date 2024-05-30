@@ -1,7 +1,16 @@
 #![deny(missing_docs)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
-
-//! # slinger (投石手)
+#![doc(
+html_favicon_url = "https://raw.githubusercontent.com/emo-crab/slinger/main/images/logo.svg",
+html_logo_url = "https://raw.githubusercontent.com/emo-crab/slinger/main/images/screenshot.png",
+)]
+//! [![GitHub]](https://github.com/emo-crab/slinger)&ensp;[![crates-io]](https://crates.io/crates/slinger)&ensp;[![docs-rs]](crate)
+//!
+//! [GitHub]: https://img.shields.io/badge/github-8da0cb?style=for-the-badge&labelColor=555555&logo=github
+//! [crates-io]: https://img.shields.io/badge/crates.io-fc8d62?style=for-the-badge&labelColor=555555&logo=rust
+//! [docs-rs]: https://img.shields.io/badge/docs.rs-66c2a5?style=for-the-badge&labelColor=555555&logo=docs.rs
+//!
+//! # slinger (投石器)
 //!
 //! The `slinger` crate provides a convenient, low-level HTTP
 //! [`Client`].
@@ -160,6 +169,7 @@ pub fn get<U>(url: U) -> errors::Result<Response>
 {
   Client::builder().build()?.get(url).send()
 }
+
 /// Shortcut method to quickly make a `RAW` request.
 ///
 /// See also the methods on the [`slinger::Response`](./struct.Response.html)
