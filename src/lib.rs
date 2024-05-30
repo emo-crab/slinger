@@ -116,6 +116,7 @@ mod request;
 mod response;
 mod socket;
 
+use bytes::Bytes;
 pub use body::Body;
 pub use client::{Client, ClientBuilder};
 pub use connector::{Connector, ConnectorBuilder};
@@ -158,6 +159,33 @@ pub fn get<U>(url: U) -> errors::Result<Response>
     <http::Uri as TryFrom<U>>::Error: Into<http::Error>,
 {
   Client::builder().build()?.get(url).send()
+}
+/// Shortcut method to quickly make a `RAW` request.
+///
+/// See also the methods on the [`slinger::Response`](./struct.Response.html)
+/// type.
+///
+/// **NOTE**: This function creates a new internal `Client` on each call,
+/// and so should not be used if making many requests. Create a
+/// [`Client`](./struct.Client.html) instead.
+///
+/// # Examples
+///
+/// ```rust
+/// # fn run() -> Result<(), slinger::Error> {
+/// let body = slinger::raw("http://httpbin.org",b"GET /robots HTTP/1.1\r\n\r\n",true)?
+///     .text()?;
+/// # Ok(())
+/// # }
+/// ```
+///
+pub fn raw<U, R>(uri: U, raw: R, unsafe_raw: bool) -> errors::Result<Response>
+  where
+    Bytes: From<R>,
+    http::Uri: TryFrom<U>,
+    <http::Uri as TryFrom<U>>::Error: Into<http::Error>,
+{
+  Client::builder().build()?.raw(uri, raw, unsafe_raw).send()
 }
 
 pub(crate) const CR_LF: &[u8] = &[13, 10];
