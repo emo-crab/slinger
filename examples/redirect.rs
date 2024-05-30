@@ -4,6 +4,7 @@ use slinger::record::HTTPRecord;
 fn main() -> Result<(), Box<dyn std::error::Error>> {
   limit(3).unwrap();
   only_same_host().unwrap();
+  jump().unwrap();
   Ok(())
 }
 
@@ -13,6 +14,15 @@ fn limit(max_redirect: usize) -> Result<(), Box<dyn std::error::Error>> {
   let resp = client.get("http://httpbin.org/redirect/10").send()?;
   let record = resp.extensions().get::<Vec<HTTPRecord>>().unwrap();
   assert_eq!(record.len(), 3);
+  Ok(())
+}
+
+fn jump() -> Result<(), Box<dyn std::error::Error>> {
+  let client = ClientBuilder::new().build().unwrap();
+  let resp = client.get("http://httpbin.org/redirect-to?url=http://www.example.com/").send()?;
+  let record = resp.extensions().get::<Vec<HTTPRecord>>().unwrap();
+  println!("{:?}", record);
+  assert_eq!(record.len(), 2);
   Ok(())
 }
 
