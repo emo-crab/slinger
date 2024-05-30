@@ -6,6 +6,7 @@ use crate::{Client, Response, COLON_SPACE, CR_LF, SPACE};
 use bytes::Bytes;
 use http::Request as HttpRequest;
 use http::{HeaderMap, HeaderName, HeaderValue, Method, Version};
+use crate::record::CommandRecord;
 
 /// Send raw socket request
 #[derive(Debug, Default, Clone)]
@@ -292,14 +293,22 @@ impl Request {
   pub fn version_mut(&mut self) -> &mut Version {
     &mut self.version
   }
-  /// raw_request
+  /// Returns raw_request.
+  ///
+  /// # Examples
+  ///
+  /// ```
+  /// # use slinger::Request;
+  /// let request: Request = Request::default();
+  /// assert_eq!(request.raw_request(), None);
+  /// ```
   #[inline]
   pub fn raw_request(&self) -> &Option<RawRequest> {
     &self.raw_request
   }
-  /// raw_request mut
+
   #[inline]
-  pub fn raw_request_mut(&mut self) -> &mut Option<RawRequest> {
+  pub(crate) fn raw_request_mut(&mut self) -> &mut Option<RawRequest> {
     &mut self.raw_request
   }
   #[inline]
@@ -308,6 +317,22 @@ impl Request {
       None => false,
       Some(raw) => raw.unsafe_raw,
     }
+  }
+  /// Returns ncat or curl command to send request.
+  ///
+  /// # Examples
+  ///
+  /// ```
+  /// #
+  /// let req: slinger::Request = slinger::Request::builder()
+  /// .uri("http://httpbin.org/get")
+  /// .header("X", "X")
+  /// .body(bytes::Bytes::from(b"\x7f\x45\x4c\x46\x01\x00\x02\x03".to_vec())).unwrap().into();
+  /// println!("{}", req.get_command());
+  /// ```
+  #[inline]
+  pub fn get_command(&self) -> String {
+    CommandRecord::from(self).command
   }
 }
 
@@ -321,6 +346,17 @@ pub struct RequestBuilder {
   builder: http::request::Builder,
   body: Body,
   raw: Option<RawRequest>,
+}
+
+impl Default for RequestBuilder {
+  fn default() -> Self {
+    RequestBuilder {
+      client: Default::default(),
+      builder: http::request::Builder::new(),
+      body: Default::default(),
+      raw: None,
+    }
+  }
 }
 
 impl RequestBuilder {
@@ -382,13 +418,13 @@ impl RequestBuilder {
   /// Build a `Request`, which can be inspected, modified and executed with
   /// `Client::execute()`.
   pub fn build(self) -> crate::Result<Request> {
-    Ok(
-      self
-        .builder
-        .body(self.body)
-        .map_err(http::Error::from)?
-        .into(),
-    )
+    let mut r: Request = self
+      .builder
+      .body(self.body)
+      .map_err(http::Error::from)?
+      .into();
+    r.raw_request = self.raw;
+    Ok(r)
   }
   /// Constructs the Request and sends it to the target URL, returning a
   /// future Response.

@@ -3,7 +3,7 @@ use crate::body::Body;
 use crate::cookies;
 use crate::errors::Result;
 use crate::record::{HTTPRecord, LocalPeerRecord, RedirectRecord};
-use crate::{Error, COLON_SPACE, CR_LF, SPACE};
+use crate::{Error, COLON_SPACE, CR_LF, SPACE, Request};
 use bytes::Bytes;
 #[cfg(feature = "charset")]
 use encoding_rs::{Encoding, UTF_8};
@@ -336,6 +336,20 @@ impl Response {
   /// ```
   pub fn http_record(&self) -> Option<&Vec<HTTPRecord>> {
     self.extensions().get::<Vec<HTTPRecord>>()
+  }
+  /// Get the request used to get this `Response`.
+  ///
+  /// # Example
+  ///
+  /// ```rust
+  /// # fn run() -> Result<(), Box<dyn std::error::Error>> {
+  /// let resp = slinger::get("http://httpbin.org/redirect/1")?;
+  /// println!("httpbin.org request: {:?}", resp.request());
+  /// # Ok(())
+  /// # }
+  /// ```
+  pub fn request(&self) -> Option<&Request> {
+    self.extensions().get::<Request>()
   }
   /// Get the redirect record used to get this `Response`.
   ///
