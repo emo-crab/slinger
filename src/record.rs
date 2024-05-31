@@ -1,6 +1,8 @@
 use crate::{Request, Response};
 use bytes::Bytes;
 use socket2::SockAddr;
+#[cfg(feature = "serde")]
+use crate::body::bytes_serde;
 
 /// http peer_addr and local_addr
 #[derive(Clone, Debug)]
@@ -26,12 +28,12 @@ pub struct RedirectRecord {
 pub struct HTTPRecord {
   /// request
   pub request: Request,
-  #[cfg_attr(feature = "serde", serde(skip))]
+  #[cfg_attr(feature = "serde", serde(with = "bytes_serde"))]
   /// raw_request
   pub raw_request: Bytes,
   /// response
   pub response: Response,
-  #[cfg_attr(feature = "serde", serde(skip))]
+  #[cfg_attr(feature = "serde", serde(with = "bytes_serde"))]
   /// raw_response
   pub raw_response: Bytes,
 }
@@ -47,7 +49,7 @@ impl HTTPRecord {
   }
 }
 
-/// curl command
+/// command record
 #[derive(Clone, Debug)]
 pub struct CommandRecord {
   /// nc or curl command
@@ -109,6 +111,12 @@ impl From<&Request> for CommandRecord {
       }
     };
     command
+  }
+}
+
+impl std::fmt::Display for CommandRecord {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    std::fmt::Display::fmt(&self.command, f)
   }
 }
 

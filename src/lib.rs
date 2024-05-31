@@ -139,7 +139,7 @@ pub use native_tls;
 #[cfg(feature = "tls")]
 pub use openssl;
 pub use proxy::Proxy;
-pub use request::{Request, RequestBuilder};
+pub use request::{Request, RequestBuilder, RawRequest};
 pub use response::{Response, ResponseBuilder, ResponseConfig};
 pub use socket::Socket;
 
@@ -183,7 +183,7 @@ pub fn get<U>(url: U) -> errors::Result<Response>
 ///
 /// ```rust
 /// # fn run() -> Result<(), slinger::Error> {
-/// let body = slinger::raw("http://httpbin.org",b"GET /robots HTTP/1.1\r\n\r\n",true)?
+/// let body = slinger::raw("http://httpbin.org","GET /robots HTTP/1.1\r\n\r\n",true)?
 ///     .text()?;
 /// # Ok(())
 /// # }

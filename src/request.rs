@@ -8,7 +8,7 @@ use http::Request as HttpRequest;
 use http::{HeaderMap, HeaderName, HeaderValue, Method, Version};
 use crate::record::CommandRecord;
 
-/// Send raw socket request
+/// Unsafe specifies whether to use raw engine for sending Non RFC-Compliant requests.
 #[derive(Debug, Default, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct RawRequest {
@@ -298,9 +298,9 @@ impl Request {
   /// # Examples
   ///
   /// ```
-  /// # use slinger::Request;
-  /// let request: Request = Request::default();
-  /// assert_eq!(request.raw_request(), None);
+  /// # use slinger::{Request, RequestBuilder};
+  /// let request: Request = RequestBuilder::default().raw("",true).build().unwrap();
+  /// assert!(request.raw_request().is_some());
   /// ```
   #[inline]
   pub fn raw_request(&self) -> &Option<RawRequest> {
