@@ -32,7 +32,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
       }
     }
   }
-  let resp = client.raw("http://10.60.26.3:9015/", raw, true).send()?;
+  let resp = client.raw("http://127.0.0.1:9015/", raw, true).send()?;
   let record = resp.http_record().unwrap();
   println!("{:?}", record[0].request);
   let command = resp.request().unwrap().get_command();
