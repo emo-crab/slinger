@@ -1,12 +1,12 @@
 #[cfg(feature = "serde")]
 use crate::body::bytes_serde;
 use crate::body::Body;
+use crate::record::CommandRecord;
 use crate::response::parser_headers;
 use crate::{Client, Response, COLON_SPACE, CR_LF, SPACE};
 use bytes::Bytes;
 use http::Request as HttpRequest;
 use http::{HeaderMap, HeaderName, HeaderValue, Method, Version};
-use crate::record::CommandRecord;
 
 /// Unsafe specifies whether to use raw engine for sending Non RFC-Compliant requests.
 #[derive(Debug, Default, Clone)]
@@ -124,6 +124,30 @@ impl Request {
   /// ```
   pub fn builder() -> http::request::Builder {
     http::request::Builder::new()
+  }
+
+  /// This method return raw_request to create a `Request`
+  /// # Examples
+  ///
+  /// ```
+  /// # use slinger::{Request, RequestBuilder};
+  /// let request: Request = Request::raw(http::Uri::from_static("http://httpbin.org"),"",true);
+  /// assert!(request.raw_request().is_some());
+
+  pub fn raw<U, R>(uri: U, raw: R, unsafe_raw: bool) -> Request
+    where
+      Bytes: From<R>,
+      http::Uri: From<U>,
+  {
+    let raw = RawRequest {
+      unsafe_raw,
+      raw: raw.into(),
+    };
+    Request {
+      uri: uri.into(),
+      raw_request: Some(raw),
+      ..Request::default()
+    }
   }
 }
 
@@ -298,8 +322,8 @@ impl Request {
   /// # Examples
   ///
   /// ```
-  /// # use slinger::{Request, RequestBuilder};
-  /// let request: Request = RequestBuilder::default().raw("",true).build().unwrap();
+  /// # use slinger::Request;
+  /// let request: Request = Request::raw(http::Uri::from_static("http://httpbin.org"),"",true);
   /// assert!(request.raw_request().is_some());
   /// ```
   #[inline]
@@ -368,6 +392,11 @@ impl RequestBuilder {
       body: Default::default(),
       raw: None,
     }
+  }
+  /// Set `uri` to this Request.
+  pub fn uri<U: Into<http::Uri>>(mut self, uri: U) -> RequestBuilder {
+    self.builder = self.builder.uri(uri);
+    self
   }
   /// Add a `Header` to this Request.
   pub fn header<K, V>(mut self, key: K, value: V) -> RequestBuilder

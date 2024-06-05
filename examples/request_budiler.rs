@@ -1,4 +1,4 @@
-use slinger::ClientBuilder;
+use slinger::{ClientBuilder, Request};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
   let client = ClientBuilder::new().build().unwrap();
@@ -9,5 +9,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     .body(b"data".as_slice())
     .send()?;
   println!("{:?}", resp.text());
+  let u = http::Uri::from_static("https://httpbin.org/post");
+  let raw = Request::raw(u, "", true);
+  println!("{:?}", raw);
   Ok(())
 }
