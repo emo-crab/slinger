@@ -63,9 +63,9 @@ impl Proxy {
   ///
   /// Supported schemes: HTTP, HTTPS, (SOCKS5, SOCKS5H).
   pub fn parse<U>(url: U) -> Result<Self>
-    where
-      http::Uri: TryFrom<U>,
-      <http::Uri as TryFrom<U>>::Error: Into<http::Error>,
+  where
+    http::Uri: TryFrom<U>,
+    <http::Uri as TryFrom<U>>::Error: Into<http::Error>,
   {
     let url: http::Uri = TryFrom::try_from(url).map_err(Into::into)?;
     let host = url.host().ok_or(new_io_error(
@@ -82,10 +82,10 @@ impl Proxy {
         },
         Some(p) => Some(p),
       }
-        .ok_or(new_io_error(
-          std::io::ErrorKind::InvalidData,
-          "no port in url",
-        ))?;
+      .ok_or(new_io_error(
+        std::io::ErrorKind::InvalidData,
+        "no port in url",
+      ))?;
       (host, port).to_socket_addrs()?.next().ok_or(new_io_error(
         std::io::ErrorKind::InvalidData,
         "no addr in url",
@@ -159,9 +159,9 @@ fn get_auth_from_authority(authority: Option<&Authority>) -> Option<(String, Opt
 }
 
 pub fn encode_basic_auth<U, P>(username: U, password: Option<P>) -> HeaderValue
-  where
-    U: std::fmt::Display,
-    P: std::fmt::Display,
+where
+  U: std::fmt::Display,
+  P: std::fmt::Display,
 {
   use base64::prelude::BASE64_STANDARD;
   use base64::write::EncoderWriter;

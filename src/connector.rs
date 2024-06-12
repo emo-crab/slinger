@@ -107,7 +107,7 @@ impl ConnectorBuilder {
   /// Combine the configuration of this builder with a connector to create a `Connector`.
   pub fn build(&self) -> Result<Connector> {
     #[cfg(feature = "tls")]
-      let tls = TlsConnector::builder()
+    let tls = TlsConnector::builder()
       .danger_accept_invalid_hostnames(!self.hostname_verification)
       .danger_accept_invalid_certs(!self.certs_verification)
       .build()?;

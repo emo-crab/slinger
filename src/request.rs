@@ -34,8 +34,8 @@ pub struct Request {
 }
 
 impl<T> From<HttpRequest<T>> for Request
-  where
-    T: Into<Body>,
+where
+  T: Into<Body>,
 {
   fn from(value: HttpRequest<T>) -> Self {
     let (parts, body) = value.into_parts();
@@ -135,9 +135,9 @@ impl Request {
   /// assert!(request.raw_request().is_some());
 
   pub fn raw<U, R>(uri: U, raw: R, unsafe_raw: bool) -> Request
-    where
-      Bytes: From<R>,
-      http::Uri: From<U>,
+  where
+    Bytes: From<R>,
+    http::Uri: From<U>,
   {
     let raw = RawRequest {
       unsafe_raw,
@@ -400,11 +400,11 @@ impl RequestBuilder {
   }
   /// Add a `Header` to this Request.
   pub fn header<K, V>(mut self, key: K, value: V) -> RequestBuilder
-    where
-      HeaderName: TryFrom<K>,
-      HeaderValue: TryFrom<V>,
-      <HeaderName as TryFrom<K>>::Error: Into<http::Error>,
-      <HeaderValue as TryFrom<V>>::Error: Into<http::Error>,
+  where
+    HeaderName: TryFrom<K>,
+    HeaderValue: TryFrom<V>,
+    <HeaderName as TryFrom<K>>::Error: Into<http::Error>,
+    <HeaderValue as TryFrom<V>>::Error: Into<http::Error>,
   {
     self.builder = self.builder.header(key, value);
     self

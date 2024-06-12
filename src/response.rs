@@ -3,7 +3,7 @@ use crate::body::Body;
 use crate::cookies;
 use crate::errors::Result;
 use crate::record::{HTTPRecord, LocalPeerRecord, RedirectRecord};
-use crate::{Error, COLON_SPACE, CR_LF, SPACE, Request};
+use crate::{Error, Request, COLON_SPACE, CR_LF, SPACE};
 use bytes::Bytes;
 #[cfg(feature = "charset")]
 use encoding_rs::{Encoding, UTF_8};
@@ -41,8 +41,8 @@ impl PartialEq for Response {
 }
 
 impl<T> From<HttpResponse<T>> for Response
-  where
-    T: Into<Body>,
+where
+  T: Into<Body>,
 {
   fn from(value: HttpResponse<T>) -> Self {
     let (parts, body) = value.into_parts();
@@ -99,7 +99,7 @@ impl Response {
   /// This requires the optional `cookie` feature to be enabled.
   #[cfg(feature = "cookie")]
   #[cfg_attr(docsrs, doc(cfg(feature = "cookie")))]
-  pub fn cookies(&self) -> impl Iterator<Item=cookies::Cookie> {
+  pub fn cookies(&self) -> impl Iterator<Item = cookies::Cookie> {
     cookies::extract_response_cookies(&self.headers).filter_map(|x| x.ok())
   }
 
@@ -121,7 +121,7 @@ impl Response {
       .and_then(|mime| mime.get_param("charset").map(|charset| charset.as_str()))
       .unwrap_or(default_encoding);
     let mut decode_text = String::new();
-    for encoding_name in &[header_encoding, &default_encoding] {
+    for encoding_name in &[header_encoding, default_encoding] {
       let encoding = Encoding::for_label(encoding_name.as_bytes()).unwrap_or(UTF_8);
       let (text, _, is_errors) = encoding.decode(body);
       if !is_errors {

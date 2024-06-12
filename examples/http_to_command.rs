@@ -46,12 +46,17 @@ fn main() {
   let req: slinger::Request = slinger::Request::builder()
     .uri("http://httpbin.org/get")
     .header("X", "X")
-    .body(Bytes::from(b"\x7f\x45\x4c\x46\x01\x00\x02\x03".to_vec())).unwrap().into();
+    .body(Bytes::from(b"\x7f\x45\x4c\x46\x01\x00\x02\x03".to_vec()))
+    .unwrap()
+    .into();
   println!("{}", req.get_command());
   let raw = RAW.replace('\n', "\r\n");
   let raw = [raw.as_bytes(), b"\x7f\x45\x4c\x46\x01\x00\x02\x03"].concat();
-  let raw_req = slinger::RequestBuilder::default().raw(raw, true).build().unwrap();
+  let raw_req = slinger::RequestBuilder::default()
+    .raw(raw, true)
+    .build()
+    .unwrap();
   println!("{}", raw_req.get_command());
   // or from request
-  println!("{}",CommandRecord::from(&req))
+  println!("{}", CommandRecord::from(&req))
 }

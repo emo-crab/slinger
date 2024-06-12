@@ -80,9 +80,9 @@ impl Client {
   ///
   /// This method fails whenever supplied `Uri` cannot be parsed.
   pub fn get<U>(&self, url: U) -> RequestBuilder
-    where
-      http::Uri: TryFrom<U>,
-      <http::Uri as TryFrom<U>>::Error: Into<http::Error>,
+  where
+    http::Uri: TryFrom<U>,
+    <http::Uri as TryFrom<U>>::Error: Into<http::Error>,
   {
     self.request(Method::GET, url)
   }
@@ -92,9 +92,9 @@ impl Client {
   ///
   /// This method fails whenever supplied `Uri` cannot be parsed.
   pub fn post<U>(&self, url: U) -> RequestBuilder
-    where
-      http::Uri: TryFrom<U>,
-      <http::Uri as TryFrom<U>>::Error: Into<http::Error>,
+  where
+    http::Uri: TryFrom<U>,
+    <http::Uri as TryFrom<U>>::Error: Into<http::Error>,
   {
     self.request(Method::POST, url)
   }
@@ -104,9 +104,9 @@ impl Client {
   ///
   /// This method fails whenever supplied `Uri` cannot be parsed.
   pub fn put<U>(&self, url: U) -> RequestBuilder
-    where
-      http::Uri: TryFrom<U>,
-      <http::Uri as TryFrom<U>>::Error: Into<http::Error>,
+  where
+    http::Uri: TryFrom<U>,
+    <http::Uri as TryFrom<U>>::Error: Into<http::Error>,
   {
     self.request(Method::PUT, url)
   }
@@ -116,9 +116,9 @@ impl Client {
   ///
   /// This method fails whenever supplied `Uri` cannot be parsed.
   pub fn patch<U>(&self, url: U) -> RequestBuilder
-    where
-      http::Uri: TryFrom<U>,
-      <http::Uri as TryFrom<U>>::Error: Into<http::Error>,
+  where
+    http::Uri: TryFrom<U>,
+    <http::Uri as TryFrom<U>>::Error: Into<http::Error>,
   {
     self.request(Method::PATCH, url)
   }
@@ -128,9 +128,9 @@ impl Client {
   ///
   /// This method fails whenever supplied `Uri` cannot be parsed.
   pub fn delete<U>(&self, url: U) -> RequestBuilder
-    where
-      http::Uri: TryFrom<U>,
-      <http::Uri as TryFrom<U>>::Error: Into<http::Error>,
+  where
+    http::Uri: TryFrom<U>,
+    <http::Uri as TryFrom<U>>::Error: Into<http::Error>,
   {
     self.request(Method::DELETE, url)
   }
@@ -140,9 +140,9 @@ impl Client {
   ///
   /// This method fails whenever supplied `Uri` cannot be parsed.
   pub fn head<U>(&self, url: U) -> RequestBuilder
-    where
-      http::Uri: TryFrom<U>,
-      <http::Uri as TryFrom<U>>::Error: Into<http::Error>,
+  where
+    http::Uri: TryFrom<U>,
+    <http::Uri as TryFrom<U>>::Error: Into<http::Error>,
   {
     self.request(Method::HEAD, url)
   }
@@ -152,9 +152,9 @@ impl Client {
   ///
   /// This method fails whenever supplied `Uri` cannot be parsed.
   pub fn trace<U>(&self, url: U) -> RequestBuilder
-    where
-      http::Uri: TryFrom<U>,
-      <http::Uri as TryFrom<U>>::Error: Into<http::Error>,
+  where
+    http::Uri: TryFrom<U>,
+    <http::Uri as TryFrom<U>>::Error: Into<http::Error>,
   {
     self.request(Method::TRACE, url)
   }
@@ -164,9 +164,9 @@ impl Client {
   ///
   /// This method fails whenever supplied `Uri` cannot be parsed.
   pub fn connect<U>(&self, url: U) -> RequestBuilder
-    where
-      http::Uri: TryFrom<U>,
-      <http::Uri as TryFrom<U>>::Error: Into<http::Error>,
+  where
+    http::Uri: TryFrom<U>,
+    <http::Uri as TryFrom<U>>::Error: Into<http::Error>,
   {
     self.request(Method::CONNECT, url)
   }
@@ -176,9 +176,9 @@ impl Client {
   ///
   /// This method fails whenever supplied `Uri` cannot be parsed.
   pub fn options<U>(&self, url: U) -> RequestBuilder
-    where
-      http::Uri: TryFrom<U>,
-      <http::Uri as TryFrom<U>>::Error: Into<http::Error>,
+  where
+    http::Uri: TryFrom<U>,
+    <http::Uri as TryFrom<U>>::Error: Into<http::Error>,
   {
     self.request(Method::OPTIONS, url)
   }
@@ -191,9 +191,9 @@ impl Client {
   ///
   /// This method fails whenever supplied `Uri` cannot be parsed.
   pub fn request<U>(&self, method: Method, url: U) -> RequestBuilder
-    where
-      http::Uri: TryFrom<U>,
-      <http::Uri as TryFrom<U>>::Error: Into<http::Error>,
+  where
+    http::Uri: TryFrom<U>,
+    <http::Uri as TryFrom<U>>::Error: Into<http::Error>,
   {
     RequestBuilder::new(
       self.clone(),
@@ -209,10 +209,10 @@ impl Client {
   ///
   /// This method fails whenever supplied `Uri` cannot be parsed.
   pub fn raw<U, R>(&self, uri: U, raw: R, unsafe_raw: bool) -> RequestBuilder
-    where
-      Bytes: From<R>,
-      http::Uri: TryFrom<U>,
-      <http::Uri as TryFrom<U>>::Error: Into<http::Error>,
+  where
+    Bytes: From<R>,
+    http::Uri: TryFrom<U>,
+    <http::Uri as TryFrom<U>>::Error: Into<http::Error>,
   {
     let mut builder = RequestBuilder::new(self.clone(), http::request::Builder::new().uri(uri));
     builder = builder.raw(raw, unsafe_raw);
@@ -233,7 +233,7 @@ impl Client {
   pub fn execute_request(&self, socket: &mut Socket, request: &Request) -> Result<Response> {
     let raw: Bytes = request.to_raw();
     #[cfg(feature = "tls")]
-      let mut certificate: Option<X509> = None;
+    let mut certificate: Option<X509> = None;
     #[cfg(feature = "tls")]
     {
       if let Some(x509) = socket.peer_certificate() {
@@ -297,9 +297,10 @@ impl Client {
       let mut response = self.execute_request(socket, &request)?;
       response.extensions_mut().insert(request.clone());
       if let (Ok(remote_addr), Ok(local_addr)) = (socket.peer_addr(), socket.local_addr()) {
-        response
-          .extensions_mut()
-          .insert(LocalPeerRecord { remote_addr, local_addr });
+        response.extensions_mut().insert(LocalPeerRecord {
+          remote_addr,
+          local_addr,
+        });
       };
       if let Some(cv) = response.headers().get(http::header::CONNECTION) {
         match cv.to_str().unwrap_or_default() {
@@ -358,7 +359,10 @@ impl Client {
         },
         _ => false,
       };
-      let mut redirect_info = RedirectRecord { should_redirect, next: None };
+      let mut redirect_info = RedirectRecord {
+        should_redirect,
+        next: None,
+      };
       // 如果要跳转，获取进入跳转策略流程
       if should_redirect {
         // 在请求头获取下一跳URL
@@ -379,7 +383,7 @@ impl Client {
                 .ok()
             }
           });
-        redirect_info.next = loc.clone();
+        redirect_info.next.clone_from(&loc);
         response.extensions_mut().insert(redirect_info);
         // 清除来源
         if let Some(loc) = loc {
@@ -553,8 +557,8 @@ impl ClientBuilder {
   /// # }
   /// ```
   pub fn user_agent<V>(mut self, value: V) -> ClientBuilder
-    where
-      V: Into<HeaderValue>,
+  where
+    V: Into<HeaderValue>,
   {
     self
       .config

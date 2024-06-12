@@ -2,7 +2,7 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![doc(
   html_favicon_url = "https://raw.githubusercontent.com/emo-crab/slinger/main/images/logo.svg",
-  html_logo_url = "https://raw.githubusercontent.com/emo-crab/slinger/main/images/screenshot.png",
+  html_logo_url = "https://raw.githubusercontent.com/emo-crab/slinger/main/images/screenshot.png"
 )]
 //! [![GitHub]](https://github.com/emo-crab/slinger)&ensp;[![crates-io]](https://crates.io/crates/slinger)&ensp;[![docs-rs]](crate)
 //!
@@ -125,8 +125,8 @@ mod request;
 mod response;
 mod socket;
 
-use bytes::Bytes;
 pub use body::Body;
+use bytes::Bytes;
 pub use client::{Client, ClientBuilder};
 pub use connector::{Connector, ConnectorBuilder};
 pub use errors::{Error, Result};
@@ -134,14 +134,14 @@ pub use http::header;
 pub use http::uri;
 pub use http::Method;
 pub use http::{StatusCode, Version};
+#[cfg(feature = "serde")]
+pub use http_serde;
 #[cfg(feature = "tls")]
 pub use native_tls;
 #[cfg(feature = "tls")]
 pub use openssl;
-#[cfg(feature = "serde")]
-pub use http_serde;
 pub use proxy::Proxy;
-pub use request::{Request, RequestBuilder, RawRequest};
+pub use request::{RawRequest, Request, RequestBuilder};
 pub use response::{Response, ResponseBuilder, ResponseConfig};
 pub use socket::Socket;
 
@@ -165,9 +165,9 @@ pub use socket::Socket;
 /// ```
 ///
 pub fn get<U>(url: U) -> errors::Result<Response>
-  where
-    http::Uri: TryFrom<U>,
-    <http::Uri as TryFrom<U>>::Error: Into<http::Error>,
+where
+  http::Uri: TryFrom<U>,
+  <http::Uri as TryFrom<U>>::Error: Into<http::Error>,
 {
   Client::builder().build()?.get(url).send()
 }
@@ -192,10 +192,10 @@ pub fn get<U>(url: U) -> errors::Result<Response>
 /// ```
 ///
 pub fn raw<U, R>(uri: U, raw: R, unsafe_raw: bool) -> errors::Result<Response>
-  where
-    Bytes: From<R>,
-    http::Uri: TryFrom<U>,
-    <http::Uri as TryFrom<U>>::Error: Into<http::Error>,
+where
+  Bytes: From<R>,
+  http::Uri: TryFrom<U>,
+  <http::Uri as TryFrom<U>>::Error: Into<http::Error>,
 {
   Client::builder().build()?.raw(uri, raw, unsafe_raw).send()
 }

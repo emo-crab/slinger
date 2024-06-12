@@ -10,7 +10,9 @@ fn main() {
 fn ssh() {
   let add = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 22);
   let timeout = Duration::new(3, 0);
-  let mut socket = slinger::Connector::default().connect_with_addr(add).unwrap();
+  let mut socket = slinger::Connector::default()
+    .connect_with_addr(add)
+    .unwrap();
   socket.set_write_timeout(Some(timeout)).unwrap();
   socket.set_read_timeout(Some(timeout)).unwrap();
   socket.write_all(b"\r\n").unwrap();
@@ -30,7 +32,9 @@ fn ssh() {
 fn redis() {
   let add = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 6379);
   let timeout = Duration::new(3, 0);
-  let mut socket = slinger::Connector::default().connect_with_addr(add).unwrap();
+  let mut socket = slinger::Connector::default()
+    .connect_with_addr(add)
+    .unwrap();
   socket.set_write_timeout(Some(timeout)).unwrap();
   socket.set_read_timeout(Some(timeout)).unwrap();
   socket.write_all(b"*1\r\n$4\r\ninfo\r\n").unwrap();

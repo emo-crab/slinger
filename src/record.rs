@@ -1,8 +1,8 @@
+#[cfg(feature = "serde")]
+use crate::body::bytes_serde;
 use crate::{Request, Response};
 use bytes::Bytes;
 use socket2::SockAddr;
-#[cfg(feature = "serde")]
-use crate::body::bytes_serde;
 
 /// http peer_addr and local_addr
 #[derive(Clone, Debug)]
@@ -61,7 +61,10 @@ impl From<&Request> for CommandRecord {
     let uri = value.uri();
     let https = uri.scheme() == Some(&http::uri::Scheme::HTTPS);
     let host = uri.host().unwrap_or("127.0.0.1");
-    let port = uri.port_u16().unwrap_or(if https { 443 } else { 80 }).to_string();
+    let port = uri
+      .port_u16()
+      .unwrap_or(if https { 443 } else { 80 })
+      .to_string();
     let raw = value.to_raw();
     let command = if let Some(_raw) = value.raw_request() {
       let lines = raw
@@ -71,7 +74,9 @@ impl From<&Request> for CommandRecord {
       let mut command = String::from("printf");
       command.push(' ');
       for line in lines {
-        command.push_str(&bash_escape(&Bytes::from(line.to_vec()).escape_ascii().to_string()));
+        command.push_str(&bash_escape(
+          &Bytes::from(line.to_vec()).escape_ascii().to_string(),
+        ));
         command.push_str("\\\r\n");
       }
       command.push('|');
@@ -82,9 +87,7 @@ impl From<&Request> for CommandRecord {
       nc_cmd.push(host);
       nc_cmd.push(&port);
       command.push_str(&nc_cmd.join(" "));
-      CommandRecord {
-        command,
-      }
+      CommandRecord { command }
     } else {
       let mut curl_cmd = vec!["curl"];
       curl_cmd.push("-X");
@@ -102,13 +105,14 @@ impl From<&Request> for CommandRecord {
       }
       if let Some(body) = value.body() {
         command.push_str(" -d ");
-        command.push_str(&format!("'{}'\\\r\n", Bytes::from(body.to_vec()).escape_ascii()));
+        command.push_str(&format!(
+          "'{}'\\\r\n",
+          Bytes::from(body.to_vec()).escape_ascii()
+        ));
       }
       command.push(' ');
       command.push_str(&bash_escape(&uri.to_string()));
-      CommandRecord {
-        command,
-      }
+      CommandRecord { command }
     };
     command
   }
