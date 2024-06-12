@@ -1,8 +1,8 @@
 #![deny(missing_docs)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![doc(
-html_favicon_url = "https://raw.githubusercontent.com/emo-crab/slinger/main/images/logo.svg",
-html_logo_url = "https://raw.githubusercontent.com/emo-crab/slinger/main/images/screenshot.png",
+  html_favicon_url = "https://raw.githubusercontent.com/emo-crab/slinger/main/images/logo.svg",
+  html_logo_url = "https://raw.githubusercontent.com/emo-crab/slinger/main/images/screenshot.png",
 )]
 //! [![GitHub]](https://github.com/emo-crab/slinger)&ensp;[![crates-io]](https://crates.io/crates/slinger)&ensp;[![docs-rs]](crate)
 //!
@@ -138,6 +138,8 @@ pub use http::{StatusCode, Version};
 pub use native_tls;
 #[cfg(feature = "tls")]
 pub use openssl;
+#[cfg(feature = "serde")]
+pub use http_serde;
 pub use proxy::Proxy;
 pub use request::{Request, RequestBuilder, RawRequest};
 pub use response::{Response, ResponseBuilder, ResponseConfig};
