@@ -9,7 +9,7 @@ use bytes::Bytes;
 use encoding_rs::{Encoding, UTF_8};
 #[cfg(feature = "gzip")]
 use flate2::read::MultiGzDecoder;
-use http::Response as HttpResponse;
+use http::{Method, Response as HttpResponse};
 #[cfg(feature = "charset")]
 use mime::Mime;
 use std::io::{BufRead, BufReader, Read};
@@ -380,16 +380,20 @@ pub struct ResponseBuilder<T: Read> {
 /// response config
 #[derive(Debug, Default)]
 pub struct ResponseConfig {
+  method: Method,
   unsafe_response: bool,
   max_read: Option<u64>,
 }
 
 impl ResponseConfig {
   /// new a response config
-  pub fn new(unsafe_response: bool, max_read: Option<u64>) -> Self {
+  pub fn new(request: &Request) -> Self {
+    let method = request.method().clone();
+    let unsafe_response = request.is_unsafe();
     ResponseConfig {
+      method,
       unsafe_response,
-      max_read,
+      max_read: None,
     }
   }
 }
@@ -444,13 +448,16 @@ impl<T: Read> ResponseBuilder<T> {
     headers
   }
   fn read_body(&mut self, header: &http::HeaderMap) -> Result<Vec<u8>> {
+    let mut body = Vec::new();
+    if matches!(self.config.method, Method::HEAD) {
+      return Ok(body);
+    }
     let mut content_length: Option<u64> = header
       .get(http::header::CONTENT_LENGTH)
       .and_then(|x| x.to_str().ok()?.parse().ok());
     if self.config.unsafe_response {
       content_length = None;
     }
-    let mut body = Vec::new();
     if let Some(te) = header.get(http::header::TRANSFER_ENCODING) {
       if te == "chunked" {
         body = self.read_chunked_body()?;

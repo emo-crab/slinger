@@ -243,8 +243,7 @@ impl Client {
     socket.write_all(&raw)?;
     socket.flush()?;
     let reader = BufReader::new(socket);
-    let mut irp =
-      ResponseBuilder::new(reader, ResponseConfig::new(request.is_unsafe(), None)).build()?;
+    let mut irp = ResponseBuilder::new(reader, ResponseConfig::new(request)).build()?;
     *irp.url_mut() = request.uri().clone();
     #[cfg(feature = "tls")]
     {

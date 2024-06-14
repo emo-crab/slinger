@@ -1,4 +1,4 @@
-use slinger::ClientBuilder;
+use slinger::{ClientBuilder, Request};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
   let client = ClientBuilder::new().build().unwrap();
@@ -9,5 +9,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     .body(b"test".to_vec())
     .send()?;
   println!("{:?}", resp.text());
+  let req = Request::builder()
+    .uri("http://httpbin.org/head")
+    .method("HEAD")
+    .header("pragma", "akamai-x-cache-on")
+    .body(None)
+    .unwrap();
+  let resp = client.execute(req).unwrap();
+  println!("{:?}", resp);
   Ok(())
 }
