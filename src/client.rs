@@ -358,10 +358,7 @@ impl Client {
           }
           true
         }
-        StatusCode::TEMPORARY_REDIRECT | StatusCode::PERMANENT_REDIRECT => match request.body() {
-          Some(body) => body.is_empty(),
-          None => true,
-        },
+        StatusCode::TEMPORARY_REDIRECT | StatusCode::PERMANENT_REDIRECT => true,
         _ => false,
       };
       let mut redirect_info = RedirectRecord {
