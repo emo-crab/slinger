@@ -280,6 +280,9 @@ impl Client {
     };
     loop {
       let mut record = HTTPRecord::default();
+      for (k, v) in self.inner.header.iter() {
+        request.headers_mut().insert(k, v.clone());
+      }
       // 设置cookie到请求头
       #[cfg(feature = "cookie")]
       {
@@ -535,6 +538,7 @@ impl ClientBuilder {
         connector: Arc::new(connector),
         redirect_policy: config.redirect_policy,
         referer: config.referer,
+        header: config.headers,
       },
     })
   }
@@ -825,4 +829,5 @@ struct ClientRef {
   connector: Arc<Connector>,
   redirect_policy: Policy,
   referer: bool,
+  header: HeaderMap,
 }

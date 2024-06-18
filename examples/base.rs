@@ -1,7 +1,13 @@
+use http::HeaderValue;
 use slinger::{ClientBuilder, Request};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-  let client = ClientBuilder::new().build().unwrap();
+  let client = ClientBuilder::new()
+    .user_agent(HeaderValue::from_static(
+      "Mozilla/5.0 (X11; Linux x86_64; rv:123.0) Gecko/20100101 Firefox/123.0",
+    ))
+    .build()
+    .unwrap();
   let resp = slinger::get("http://httpbin.org/get")?;
   println!("{:?}", resp.body());
   let resp = client
