@@ -28,12 +28,18 @@ pub struct RedirectRecord {
 pub struct HTTPRecord {
   /// request
   pub request: Request,
-  #[cfg_attr(feature = "serde", serde(with = "bytes_serde"))]
+  #[cfg_attr(
+    feature = "serde",
+    serde(with = "bytes_serde", skip_serializing_if = "Bytes::is_empty")
+  )]
   /// raw_request
   pub raw_request: Bytes,
   /// response
   pub response: Response,
-  #[cfg_attr(feature = "serde", serde(with = "bytes_serde"))]
+  #[cfg_attr(
+    feature = "serde",
+    serde(with = "bytes_serde", skip_serializing_if = "Bytes::is_empty")
+  )]
   /// raw_response
   pub raw_response: Bytes,
 }
