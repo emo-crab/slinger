@@ -4,14 +4,14 @@ use crate::errors::Result;
 use crate::proxy::{Proxy, ProxySocket};
 use crate::socket::Socket;
 #[cfg(feature = "tls")]
-use native_tls::{HandshakeError, TlsConnector};
+use native_tls::{Certificate, HandshakeError, Identity, TlsConnector};
 use socket2::Socket as RawSocket;
 use socket2::{Domain, Protocol, Type};
 use std::net::SocketAddr;
 use std::time::Duration;
 
 /// ConnectorBuilder
-#[derive(Debug, Default, Clone, PartialEq)]
+#[derive(Clone)]
 pub struct ConnectorBuilder {
   hostname_verification: bool,
   certs_verification: bool,
@@ -19,9 +19,34 @@ pub struct ConnectorBuilder {
   write_timeout: Option<Duration>,
   connect_timeout: Option<Duration>,
   nodelay: bool,
+  #[cfg(feature = "tls")]
+  tls_sni: bool,
+  #[cfg(feature = "tls")]
+  identity: Option<Identity>,
+  #[cfg(feature = "tls")]
+  certificate: Vec<Certificate>,
   proxy: Option<Proxy>,
 }
 
+impl Default for ConnectorBuilder {
+  fn default() -> Self {
+    Self {
+      hostname_verification: true,
+      certs_verification: true,
+      read_timeout: None,
+      write_timeout: None,
+      connect_timeout: None,
+      nodelay: false,
+      #[cfg(feature = "tls")]
+      tls_sni: true,
+      #[cfg(feature = "tls")]
+      identity: None,
+      #[cfg(feature = "tls")]
+      certificate: vec![],
+      proxy: None,
+    }
+  }
+}
 impl ConnectorBuilder {
   /// Controls the use of hostname verification.
   ///
@@ -54,6 +79,26 @@ impl ConnectorBuilder {
   /// Default is `false`.
   pub fn nodelay(mut self, value: bool) -> ConnectorBuilder {
     self.nodelay = value;
+    self
+  }
+  /// Controls the use of Server Name Indication (SNI).
+  ///
+  /// Defaults to `true`.
+  #[cfg(feature = "tls")]
+  pub fn tls_sni(mut self, value: bool) -> ConnectorBuilder {
+    self.tls_sni = value;
+    self
+  }
+  /// Adds a certificate to the set of roots that the connector will trust.
+  #[cfg(feature = "tls")]
+  pub fn certificate(mut self, value: Vec<Certificate>) -> ConnectorBuilder {
+    self.certificate = value;
+    self
+  }
+  /// Sets the identity to be used for client certificate authentication.
+  #[cfg(feature = "tls")]
+  pub fn identity(mut self, value: Identity) -> ConnectorBuilder {
+    self.identity = Some(value);
     self
   }
   /// Enables a read timeout.
@@ -107,10 +152,20 @@ impl ConnectorBuilder {
   /// Combine the configuration of this builder with a connector to create a `Connector`.
   pub fn build(&self) -> Result<Connector> {
     #[cfg(feature = "tls")]
-    let tls = TlsConnector::builder()
-      .danger_accept_invalid_hostnames(!self.hostname_verification)
-      .danger_accept_invalid_certs(!self.certs_verification)
-      .build()?;
+    let tls = {
+      let mut binding = TlsConnector::builder();
+      let mut tls_builder = binding
+        .use_sni(self.tls_sni)
+        .danger_accept_invalid_hostnames(!self.hostname_verification)
+        .danger_accept_invalid_certs(!self.certs_verification);
+      for c in self.certificate.iter() {
+        tls_builder = tls_builder.add_root_certificate(c.clone());
+      }
+      if let Some(identity) = &self.identity {
+        tls_builder.identity(identity.clone());
+      };
+      tls_builder.build()?
+    };
     let conn = Connector {
       connect_timeout: self.connect_timeout,
       nodelay: self.nodelay,

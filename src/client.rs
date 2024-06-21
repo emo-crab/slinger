@@ -14,6 +14,7 @@ use native_tls::{Certificate, Identity};
 #[cfg(feature = "tls")]
 use openssl::x509::X509;
 use std::collections::HashMap;
+use std::fmt::{Debug, Formatter};
 use std::io::{BufReader, Write};
 use std::path::PathBuf;
 use std::str::FromStr;
@@ -490,6 +491,7 @@ fn make_referer(next: &http::Uri, previous: &http::Uri) -> Option<HeaderValue> {
 /// # }
 /// ```
 #[must_use]
+#[derive(Clone, Debug)]
 pub struct ClientBuilder {
   config: Config,
 }
@@ -524,13 +526,23 @@ impl ClientBuilder {
   /// [`slinger::client`][Client] for details.
   pub fn build(self) -> Result<Client> {
     let config = self.config;
-    let connector = ConnectorBuilder::default()
+    let mut connector_builder = ConnectorBuilder::default()
       .proxy(config.proxy)
-      .nodelay(config.nodelay)
       .read_timeout(config.timeout)
       .connect_timeout(config.connect_timeout)
-      .write_timeout(config.timeout)
-      .build()?;
+      .write_timeout(config.timeout);
+    connector_builder = connector_builder.nodelay(config.nodelay);
+    #[cfg(feature = "tls")]
+    {
+      connector_builder = connector_builder.hostname_verification(config.hostname_verification);
+      connector_builder = connector_builder.certs_verification(config.certs_verification);
+      connector_builder = connector_builder.certificate(config.root_certs);
+      connector_builder = connector_builder.tls_sni(config.tls_sni);
+      if let Some(identity) = config.identity {
+        connector_builder = connector_builder.identity(identity);
+      }
+    }
+    let connector = connector_builder.build()?;
     Ok(Client {
       inner: ClientRef {
         #[cfg(feature = "cookie")]
@@ -736,6 +748,8 @@ impl ClientBuilder {
   /// Controls the use of TLS server name indication.
   ///
   /// Defaults to `true`.
+  ///
+  #[cfg(feature = "tls")]
   pub fn tls_sni(mut self, tls_sni: bool) -> ClientBuilder {
     self.config.tls_sni = tls_sni;
     self
@@ -779,7 +793,7 @@ impl ClientBuilder {
     self
   }
 }
-
+#[derive(Clone)]
 struct Config {
   connect_timeout: Option<Duration>,
   headers: HeaderMap,
@@ -793,12 +807,28 @@ struct Config {
   identity: Option<Identity>,
   hostname_verification: bool,
   certs_verification: bool,
+  #[cfg(feature = "tls")]
   tls_sni: bool,
   redirect_policy: Policy,
   #[cfg(feature = "cookie")]
   cookie_store: Option<Arc<dyn cookies::CookieStore>>,
 }
 
+impl Debug for Config {
+  fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+    f.debug_struct("Config")
+      .field("connect_timeout", &self.connect_timeout)
+      .field("headers", &self.headers)
+      .field("referer", &self.referer)
+      .field("proxy", &self.proxy)
+      .field("timeout", &self.timeout)
+      .field("nodelay", &self.nodelay)
+      .field("hostname_verification", &self.hostname_verification)
+      .field("certs_verification", &self.certs_verification)
+      .field("redirect_policy", &self.redirect_policy)
+      .finish()
+  }
+}
 impl Default for Config {
   fn default() -> Self {
     Self {
@@ -814,7 +844,8 @@ impl Default for Config {
       identity: None,
       hostname_verification: false,
       certs_verification: false,
-      tls_sni: false,
+      #[cfg(feature = "tls")]
+      tls_sni: true,
       redirect_policy: Policy::Limit(10),
       #[cfg(feature = "cookie")]
       cookie_store: None,
