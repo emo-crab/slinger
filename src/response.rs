@@ -187,7 +187,7 @@ impl Response {
   ///
   /// ```rust
   /// use slinger::Client;
-  /// use slinger::StatusCode;
+  /// use slinger::http::StatusCode;
   /// # fn run() -> Result<(), Box<dyn std::error::Error>> {
   /// let client = Client::new();
   ///
@@ -223,7 +223,7 @@ impl Response {
   ///
   /// ```
   /// use slinger::Client;
-  /// use slinger::header::ETAG;
+  /// use slinger::http::header::ETAG;
   ///
   /// # fn run() -> Result<(), Box<dyn std::error::Error>> {
   /// let client = Client::new();

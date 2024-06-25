@@ -586,7 +586,7 @@ impl ClientBuilder {
   /// # Example
   ///
   /// ```rust
-  /// use slinger::header;
+  /// use slinger::http::header;
   /// # fn build_client() -> Result<(), slinger::Error> {
   /// let mut headers = header::HeaderMap::new();
   /// headers.insert("X-MY-HEADER", header::HeaderValue::from_static("value"));
