@@ -130,10 +130,7 @@ use bytes::Bytes;
 pub use client::{Client, ClientBuilder};
 pub use connector::{Connector, ConnectorBuilder};
 pub use errors::{Error, Result};
-pub use http::header;
-pub use http::uri;
-pub use http::Method;
-pub use http::{StatusCode, Version};
+pub use http;
 #[cfg(feature = "serde")]
 pub use http_serde;
 #[cfg(feature = "tls")]
