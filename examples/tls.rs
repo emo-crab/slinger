@@ -1,7 +1,6 @@
 fn main() -> Result<(), Box<dyn std::error::Error>> {
   #[cfg(feature = "tls")]
   {
-    use openssl::x509::X509;
     use slinger::ClientBuilder;
     let urls = vec![
       "https://expired.badssl.com/",
@@ -29,7 +28,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
       println!("{}", url);
       let resp = client.get(url).send()?;
       println!("{}", resp.text().unwrap_or_default());
-      let certificate = resp.extensions().get::<X509>().unwrap();
+      let certificate = resp.certificate().unwrap();
       println!("{:?}", certificate);
     }
     for url in key_urls {
@@ -38,7 +37,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
       match resp {
         Ok(resp) => {
           println!("{}", resp.text().unwrap_or_default());
-          let certificate = resp.extensions().get::<X509>().unwrap();
+          let certificate = resp.certificate().unwrap();
           println!("{:?}", certificate);
         }
         Err(err) => {

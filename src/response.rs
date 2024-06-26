@@ -323,6 +323,22 @@ impl Response {
   pub fn local_peer_record(&self) -> Option<&LocalPeerRecord> {
     self.extensions().get::<LocalPeerRecord>()
   }
+  /// Get the certificate to get this `Response`.
+  ///
+  /// # Example
+  ///
+  /// ```rust
+  /// # fn run() -> Result<(), Box<dyn std::error::Error>> {
+  /// let resp = slinger::get("https://httpbin.org/")?;
+  /// println!("httpbin.org certificate: {:?}", resp.certificate());
+  /// # Ok(())
+  /// # }
+  /// ```
+
+  #[cfg(feature = "tls")]
+  pub fn certificate(&self) -> Option<&openssl::x509::X509> {
+    self.extensions().get::<openssl::x509::X509>()
+  }
   /// Get the http record used to get this `Response`.
   ///
   /// # Example
