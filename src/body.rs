@@ -95,10 +95,21 @@ impl From<Option<Vec<u8>>> for Body {
 
 impl fmt::Debug for Body {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-    fmt::Debug::fmt(&self.inner, f)
+    match String::from_utf8(self.inner.to_vec()) {
+      Ok(s) => fmt::Display::fmt(&s, f),
+      Err(_err) => fmt::Debug::fmt(&self.inner, f),
+    }
   }
 }
 
+impl fmt::Display for Body {
+  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    match String::from_utf8(self.inner.to_vec()) {
+      Ok(s) => fmt::Display::fmt(&s, f),
+      Err(_err) => fmt::Debug::fmt(&self.inner, f),
+    }
+  }
+}
 #[cfg(feature = "serde")]
 impl serde::Serialize for Body {
   fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
