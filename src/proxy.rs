@@ -12,32 +12,40 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV
 use std::str::FromStr;
 
 impl Proxy {
-  fn http(host: &str, addr: SocketAddr) -> Result<Self> {
+  fn http(uri: &http::Uri) -> Result<Self> {
+    let (host, addr) = uri_to_host_addr(uri)?;
     Ok(Proxy::HTTP(HttpProxy {
+      uri: uri.clone(),
       https: false,
       auth: None,
       addr,
-      host: host.to_string(),
+      host,
     }))
   }
 
-  fn https(host: &str, addr: SocketAddr) -> Result<Self> {
+  fn https(uri: &http::Uri) -> Result<Self> {
+    let (host, addr) = uri_to_host_addr(uri)?;
     Ok(Proxy::HTTP(HttpProxy {
+      uri: uri.clone(),
       https: true,
       auth: None,
       addr,
       host: host.to_string(),
     }))
   }
-  fn socks5(host: &str, addr: SocketAddr) -> Result<Self> {
+  fn socks5(uri: &http::Uri) -> Result<Self> {
+    let (host, addr) = uri_to_host_addr(uri)?;
     Ok(Proxy::Socket(Socket5Proxy::new(
+      uri.clone(),
       host.to_string(),
       addr,
       false,
     )))
   }
-  fn socks5h(host: &str, addr: SocketAddr) -> Result<Self> {
+  fn socks5h(uri: &http::Uri) -> Result<Self> {
+    let (host, addr) = uri_to_host_addr(uri)?;
     Ok(Proxy::Socket(Socket5Proxy::new(
+      uri.clone(),
       host.to_string(),
       addr,
       true,
@@ -59,6 +67,13 @@ impl Proxy {
       }
     }
   }
+  /// Convert Proxy to a URL
+  pub fn uri(&self) -> http::Uri {
+    match self {
+      Proxy::HTTP(http) => http.uri.clone(),
+      Proxy::Socket(socket) => socket.uri.clone(),
+    }
+  }
   /// Convert a URL into a proxy
   ///
   /// Supported schemes: HTTP, HTTPS, (SOCKS5, SOCKS5H).
@@ -68,35 +83,11 @@ impl Proxy {
     <http::Uri as TryFrom<U>>::Error: Into<http::Error>,
   {
     let url: http::Uri = TryFrom::try_from(url).map_err(Into::into)?;
-    let host = url.host().ok_or(new_io_error(
-      std::io::ErrorKind::InvalidData,
-      "url not host",
-    ))?;
-    let to_addr = || {
-      let port = match url.port_u16() {
-        None => match url.scheme_str() {
-          Some("socks5") | Some("socks5h") => Some(1080),
-          Some("http") => Some(80),
-          Some("https") => Some(443),
-          _ => None,
-        },
-        Some(p) => Some(p),
-      }
-      .ok_or(new_io_error(
-        std::io::ErrorKind::InvalidData,
-        "no port in url",
-      ))?;
-      (host, port).to_socket_addrs()?.next().ok_or(new_io_error(
-        std::io::ErrorKind::InvalidData,
-        "no addr in url",
-      ))
-    };
-
     let mut scheme = match url.scheme_str() {
-      Some("http") => Self::http(host, to_addr()?)?,
-      Some("https") => Self::https(host, to_addr()?)?,
-      Some("socks5") => Self::socks5(host, to_addr()?)?,
-      Some("socks5h") => Self::socks5h(host, to_addr()?)?,
+      Some("http") => Self::http(&url)?,
+      Some("https") => Self::https(&url)?,
+      Some("socks5") => Self::socks5(&url)?,
+      Some("socks5h") => Self::socks5h(&url)?,
       _ => {
         return Err(new_io_error(
           std::io::ErrorKind::NotConnected,
@@ -126,7 +117,32 @@ impl Proxy {
     }
   }
 }
-
+fn uri_to_host_addr(uri: &http::Uri) -> Result<(String, SocketAddr)> {
+  let host = uri.host().ok_or(new_io_error(
+    std::io::ErrorKind::InvalidData,
+    "url not host",
+  ))?;
+  let to_addr = || {
+    let port = match uri.port_u16() {
+      None => match uri.scheme_str() {
+        Some("socks5") | Some("socks5h") => Some(1080),
+        Some("http") => Some(80),
+        Some("https") => Some(443),
+        _ => None,
+      },
+      Some(p) => Some(p),
+    }
+    .ok_or(new_io_error(
+      std::io::ErrorKind::InvalidData,
+      "no port in url",
+    ))?;
+    (host, port).to_socket_addrs()?.next().ok_or(new_io_error(
+      std::io::ErrorKind::InvalidData,
+      "no addr in url",
+    ))
+  };
+  Ok((host.to_string(), to_addr()?))
+}
 fn get_auth_from_authority(authority: Option<&Authority>) -> Option<(String, Option<String>)> {
   match authority {
     None => None,
@@ -224,6 +240,7 @@ pub enum Proxy {
 /// For example, HTTP
 #[derive(Clone, Debug, PartialEq)]
 pub struct HttpProxy {
+  uri: http::Uri,
   https: bool,
   auth: Option<HeaderValue>,
   addr: SocketAddr,
@@ -378,6 +395,7 @@ fn default_port(uri: &http::Uri) -> Option<u16> {
 /// For convenience, it can be dereferenced to its inner socket.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Socket5Proxy {
+  uri: http::Uri,
   host: String,
   addr: SocketAddr,
   auth: Option<AuthenticationMethod>,
@@ -385,8 +403,9 @@ pub struct Socket5Proxy {
 }
 
 impl Socket5Proxy {
-  fn new(host: String, addr: SocketAddr, remote_dns: bool) -> Self {
+  fn new(uri: http::Uri, host: String, addr: SocketAddr, remote_dns: bool) -> Self {
     Socket5Proxy {
+      uri,
       host,
       addr,
       auth: None,
