@@ -558,7 +558,6 @@ impl<T: Read> ResponseBuilder<T> {
   /// `Client::execute()`.
   pub fn build(mut self) -> Result<Response> {
     let (v, c) = self.parser_version()?;
-    println!("{:?},{:?}", v, c);
     self.builder = self.builder.version(v).status(c);
     let header = self.read_headers();
     // 读取body
