@@ -1,9 +1,9 @@
 use crate::body::Body;
 #[cfg(feature = "cookie")]
 use crate::cookies;
-use crate::errors::Result;
+use crate::errors::{new_io_error, Error, Result};
 use crate::record::{HTTPRecord, LocalPeerRecord, RedirectRecord};
-use crate::{Error, Request, COLON_SPACE, CR_LF, SPACE};
+use crate::{Request, COLON_SPACE, CR_LF, SPACE};
 use bytes::Bytes;
 #[cfg(feature = "charset")]
 use encoding_rs::{Encoding, UTF_8};
@@ -427,8 +427,15 @@ impl<T: Read> ResponseBuilder<T> {
     let mut buffer = String::new();
     self.reader.read_line(&mut buffer)?;
     let mut version = http::Version::default();
-    let mut code = http::StatusCode::default();
+    let mut sc = http::StatusCode::default();
+    let (mut vf, mut sf) = (false, false);
     for (index, vc) in buffer.splitn(3, |c| c == ' ').enumerate() {
+      if vc.is_empty() {
+        return Err(new_io_error(
+          std::io::ErrorKind::InvalidData,
+          "invalid http version and status_code data",
+        ));
+      }
       match index {
         0 => {
           version = match vc {
@@ -437,16 +444,29 @@ impl<T: Read> ResponseBuilder<T> {
             "HTTP/1.1" => http::Version::HTTP_11,
             "HTTP/2.0" => http::Version::HTTP_2,
             "HTTP/3.0" => http::Version::HTTP_3,
-            _ => http::Version::default(),
+            _ => {
+              return Err(new_io_error(
+                std::io::ErrorKind::InvalidData,
+                "invalid http version",
+              ));
+            }
           };
+          vf = true;
         }
         1 => {
-          code = http::StatusCode::try_from(vc).unwrap_or_default();
+          sc = http::StatusCode::try_from(vc).map_err(|x| Error::Http(http::Error::from(x)))?;
+          sf = true;
         }
         _ => {}
       }
     }
-    Ok((version, code))
+    if !(vf && sf) {
+      return Err(new_io_error(
+        std::io::ErrorKind::InvalidData,
+        "invalid http version and status_code data",
+      ));
+    }
+    Ok((version, sc))
   }
   fn read_headers(&mut self) -> http::HeaderMap {
     // 读取请求头
@@ -538,6 +558,7 @@ impl<T: Read> ResponseBuilder<T> {
   /// `Client::execute()`.
   pub fn build(mut self) -> Result<Response> {
     let (v, c) = self.parser_version()?;
+    println!("{:?},{:?}", v, c);
     self.builder = self.builder.version(v).status(c);
     let header = self.read_headers();
     // 读取body
