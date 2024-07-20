@@ -1,3 +1,18 @@
+use std::collections::HashMap;
+use std::fmt::{Debug, Formatter};
+use std::io::{BufReader, Write};
+use std::path::PathBuf;
+use std::str::FromStr;
+use std::sync::Arc;
+use std::time::Duration;
+
+use bytes::Bytes;
+use http::{HeaderMap, HeaderValue, Method, StatusCode};
+#[cfg(feature = "tls")]
+use native_tls::{Certificate, Identity};
+#[cfg(feature = "tls")]
+use openssl::x509::X509;
+
 #[cfg(feature = "cookie")]
 use crate::cookies;
 use crate::errors::{new_io_error, Result};
@@ -7,19 +22,6 @@ use crate::redirect::{remove_sensitive_headers, Action, Policy};
 use crate::response::{ResponseBuilder, ResponseConfig};
 use crate::socket::Socket;
 use crate::{Connector, ConnectorBuilder, Request, RequestBuilder, Response};
-use bytes::Bytes;
-use http::{HeaderMap, HeaderValue, Method, StatusCode};
-#[cfg(feature = "tls")]
-use native_tls::{Certificate, Identity};
-#[cfg(feature = "tls")]
-use openssl::x509::X509;
-use std::collections::HashMap;
-use std::fmt::{Debug, Formatter};
-use std::io::{BufReader, Write};
-use std::path::PathBuf;
-use std::str::FromStr;
-use std::sync::Arc;
-use std::time::Duration;
 
 /// A `Client` to make Requests with.
 ///
@@ -244,7 +246,8 @@ impl Client {
     socket.write_all(&raw)?;
     socket.flush()?;
     let reader = BufReader::new(socket);
-    let mut irp = ResponseBuilder::new(reader, ResponseConfig::new(request)).build()?;
+    let mut irp =
+      ResponseBuilder::new(reader, ResponseConfig::new(request, self.inner.timeout)).build()?;
     *irp.url_mut() = request.uri().clone();
     #[cfg(feature = "tls")]
     {
@@ -485,7 +488,7 @@ fn make_referer(next: &http::Uri, previous: &http::Uri) -> Option<HeaderValue> {
 /// use std::time::Duration;
 ///
 /// let client = slinger::Client::builder()
-///     .timeout(Duration::from_secs(10))
+///     .timeout(Some(Duration::from_secs(10)))
 ///     .build()?;
 /// # Ok(())
 /// # }
@@ -528,7 +531,7 @@ impl ClientBuilder {
     let config = self.config;
     let mut connector_builder = ConnectorBuilder::default()
       .proxy(config.proxy)
-      .read_timeout(config.timeout)
+      .read_timeout(config.read_timeout)
       .connect_timeout(config.connect_timeout)
       .write_timeout(config.timeout);
     connector_builder = connector_builder.nodelay(config.nodelay);
@@ -545,6 +548,7 @@ impl ClientBuilder {
     let connector = connector_builder.build()?;
     Ok(Client {
       inner: ClientRef {
+        timeout: config.timeout,
         #[cfg(feature = "cookie")]
         cookie_store: config.cookie_store,
         connector: Arc::new(connector),
@@ -645,15 +649,22 @@ impl ClientBuilder {
   /// Default is 30 seconds.
   ///
   /// Pass `None` to disable timeout.
-  pub fn timeout(mut self, timeout: Duration) -> ClientBuilder {
-    self.config.timeout = Some(timeout);
+  pub fn timeout(mut self, timeout: Option<Duration>) -> ClientBuilder {
+    self.config.timeout = timeout;
     self
   }
   /// Set a timeout for only the connect phase of a `Client`.
   ///
   /// Default is `None`.
-  pub fn connect_timeout(mut self, timeout: Duration) -> ClientBuilder {
-    self.config.connect_timeout = Some(timeout);
+  pub fn connect_timeout(mut self, timeout: Option<Duration>) -> ClientBuilder {
+    self.config.connect_timeout = timeout;
+    self
+  }
+  /// Set a timeout for only the read phase of a `Client`.
+  ///
+  /// Default is `None`.
+  pub fn read_timeout(mut self, timeout: Option<Duration>) -> ClientBuilder {
+    self.config.read_timeout = timeout;
     self
   }
   // TCP options
@@ -795,11 +806,12 @@ impl ClientBuilder {
 }
 #[derive(Clone)]
 struct Config {
+  timeout: Option<Duration>,
   connect_timeout: Option<Duration>,
+  read_timeout: Option<Duration>,
   headers: HeaderMap,
   referer: bool,
   proxy: Option<Proxy>,
-  timeout: Option<Duration>,
   nodelay: bool,
   #[cfg(feature = "tls")]
   root_certs: Vec<Certificate>,
@@ -832,11 +844,12 @@ impl Debug for Config {
 impl Default for Config {
   fn default() -> Self {
     Self {
+      timeout: Some(Duration::from_secs(30)),
       connect_timeout: None,
+      read_timeout: None,
       headers: Default::default(),
       referer: false,
       proxy: None,
-      timeout: None,
       nodelay: false,
       #[cfg(feature = "tls")]
       root_certs: vec![],
@@ -855,6 +868,7 @@ impl Default for Config {
 
 #[derive(Clone, Debug)]
 struct ClientRef {
+  timeout: Option<Duration>,
   #[cfg(feature = "cookie")]
   cookie_store: Option<Arc<dyn cookies::CookieStore>>,
   connector: Arc<Connector>,

@@ -1,9 +1,7 @@
-use crate::body::Body;
-#[cfg(feature = "cookie")]
-use crate::cookies;
-use crate::errors::{new_io_error, Error, Result};
-use crate::record::{HTTPRecord, LocalPeerRecord, RedirectRecord};
-use crate::{Request, COLON_SPACE, CR_LF, SPACE};
+use std::fmt::Debug;
+use std::io::{BufRead, BufReader, Read};
+use std::time::{Duration, Instant};
+
 use bytes::Bytes;
 #[cfg(feature = "charset")]
 use encoding_rs::{Encoding, UTF_8};
@@ -12,7 +10,13 @@ use flate2::read::MultiGzDecoder;
 use http::{Method, Response as HttpResponse};
 #[cfg(feature = "charset")]
 use mime::Mime;
-use std::io::{BufRead, BufReader, Read};
+
+use crate::body::Body;
+#[cfg(feature = "cookie")]
+use crate::cookies;
+use crate::errors::{new_io_error, Error, Result};
+use crate::record::{HTTPRecord, LocalPeerRecord, RedirectRecord};
+use crate::{Request, COLON_SPACE, CR_LF, SPACE};
 
 /// A Response to a submitted `Request`.
 #[derive(Debug, Default, Clone)]
@@ -397,17 +401,19 @@ pub struct ResponseBuilder<T: Read> {
 #[derive(Debug, Default)]
 pub struct ResponseConfig {
   method: Method,
+  timeout: Option<Duration>,
   unsafe_response: bool,
   max_read: Option<u64>,
 }
 
 impl ResponseConfig {
   /// new a response config
-  pub fn new(request: &Request) -> Self {
+  pub fn new(request: &Request, timeout: Option<Duration>) -> Self {
     let method = request.method().clone();
     let unsafe_response = request.is_unsafe();
     ResponseConfig {
       method,
+      timeout,
       unsafe_response,
       max_read: None,
     }
@@ -503,11 +509,38 @@ impl<T: Read> ResponseBuilder<T> {
       if let Some(max_read) = self.config.max_read {
         cl = std::cmp::min(cl, max_read);
       }
-      let mut buf = vec![0; cl as usize];
-      self.reader.read_exact(&mut buf)?;
-      body = buf;
-    } else {
-      self.reader.read_to_end(&mut body)?;
+      let mut buffer = vec![0; 12]; // 定义一个缓冲区
+      let mut total_bytes_read = 0;
+      let mut start = Instant::now();
+      let timeout = self.config.timeout;
+      loop {
+        match self.reader.read(&mut buffer) {
+          Ok(0) => break,
+          Ok(n) => {
+            body.extend_from_slice(&buffer[..n]);
+            total_bytes_read += n;
+            // 当有读取到数据的时候重置计时器
+            start = Instant::now();
+          }
+          Err(ref err) if err.kind() == std::io::ErrorKind::WouldBlock => {
+            // 如果没有数据可读，但超时尚未到达，可以在这里等待或重试
+            // 当已经有数据了或者触发超时就跳出循环，防止防火墙一直把会话挂着不释放
+            if total_bytes_read > 0 {
+              break;
+            } else if let Some(to) = timeout {
+              if start.elapsed() > to {
+                break;
+              }
+            }
+            std::thread::sleep(Duration::from_micros(100));
+          }
+          Err(_err) => break,
+        }
+        // 检查是否读取到了全部数据，如果是，则退出循环
+        if total_bytes_read >= cl as usize {
+          break;
+        }
+      }
     }
     #[cfg(feature = "gzip")]
     if let Some(ce) = header.get(http::header::CONTENT_ENCODING) {

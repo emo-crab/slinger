@@ -1,6 +1,7 @@
-use bytes::Bytes;
 use std::fmt;
 use std::ops::{Deref, DerefMut};
+
+use bytes::Bytes;
 
 /// A body.
 #[derive(Clone, PartialEq)]
@@ -96,7 +97,7 @@ impl From<Option<Vec<u8>>> for Body {
 impl fmt::Debug for Body {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     match String::from_utf8(self.inner.to_vec()) {
-      Ok(s) => fmt::Display::fmt(&s, f),
+      Ok(s) => fmt::Debug::fmt(&s, f),
       Err(_err) => fmt::Debug::fmt(&self.inner, f),
     }
   }

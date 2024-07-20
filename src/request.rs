@@ -1,12 +1,15 @@
+use std::fmt::{Debug, Formatter};
+
+use bytes::Bytes;
+use http::Request as HttpRequest;
+use http::{HeaderMap, HeaderName, HeaderValue, Method, Version};
+
 #[cfg(feature = "serde")]
 use crate::body::bytes_serde;
 use crate::body::Body;
 use crate::record::CommandRecord;
 use crate::response::parser_headers;
 use crate::{Client, Response, COLON_SPACE, CR_LF, SPACE};
-use bytes::Bytes;
-use http::Request as HttpRequest;
-use http::{HeaderMap, HeaderName, HeaderValue, Method, Version};
 
 /// Unsafe specifies whether to use raw engine for sending Non RFC-Compliant requests.
 #[derive(Debug, Default, Clone)]
@@ -18,7 +21,7 @@ pub struct RawRequest {
 }
 
 /// A request which can be executed with `Client::execute()`.
-#[derive(Debug, Default, Clone)]
+#[derive(Default, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Request {
   #[cfg_attr(feature = "serde", serde(with = "http_serde::uri"))]
@@ -32,7 +35,25 @@ pub struct Request {
   body: Option<Body>,
   raw_request: Option<RawRequest>,
 }
-
+impl Debug for Request {
+  fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+    if let Some(raw) = &self.raw_request {
+      f.debug_struct("RawRequest")
+        .field("uri", &self.uri)
+        .field("raw", &raw.raw)
+        .field("unsafe_raw", &raw.unsafe_raw)
+        .finish()
+    } else {
+      f.debug_struct("Request")
+        .field("uri", &self.uri)
+        .field("version", &self.version)
+        .field("method", &self.method)
+        .field("headers", &self.headers)
+        .field("body", &self.body)
+        .finish()
+    }
+  }
+}
 impl<T> From<HttpRequest<T>> for Request
 where
   T: Into<Body>,
