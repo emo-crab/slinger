@@ -1,6 +1,6 @@
 [package]
-name = "slinger" #改这个
-version = "0.1.4"
+name = "slinger"                                              #改这个
+version = "0.1.5"
 edition = "2021"
 description = "An HTTP Client for Rust designed for hackers."
 homepage = "https://github.com/emo-crab/slinger"
@@ -12,11 +12,11 @@ license = "GPL-3.0-only"
 
 #https://github.com/johnthagen/min-sized-rust
 [profile.release]
-opt-level = "z"     # Optimize for size.
-lto = true          # Enable Link Time Optimization
-codegen-units = 1   # Reduce number of codegen units to increase optimizations.
-panic = "abort"     # Abort on panic
-strip = true        # Automatically strip symbols from the binary.
+opt-level = "z"   # Optimize for size.
+lto = true        # Enable Link Time Optimization
+codegen-units = 1 # Reduce number of codegen units to increase optimizations.
+panic = "abort"   # Abort on panic
+strip = true      # Automatically strip symbols from the binary.
 
 [profile.dev.package."*"]
 opt-level = 3
