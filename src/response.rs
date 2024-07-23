@@ -483,7 +483,11 @@ impl<T: Read> ResponseBuilder<T> {
         break;
       }
       if let Ok((Some(k), Some(v))) = parser_headers(&header_line) {
-        headers.insert(k, v);
+        if headers.contains_key(&k) {
+          headers.append(k, v);
+        } else {
+          headers.insert(k, v);
+        }
       };
       header_line.clear();
     }
