@@ -494,9 +494,13 @@ impl<T: Read> ResponseBuilder<T> {
     if matches!(self.config.method, Method::HEAD) {
       return Ok(body);
     }
-    let mut content_length: Option<u64> = header
-      .get(http::header::CONTENT_LENGTH)
-      .and_then(|x| x.to_str().ok()?.parse().ok());
+    let mut content_length: Option<u64> = header.get(http::header::CONTENT_LENGTH).and_then(|x| {
+      x.to_str()
+        .ok()?
+        .parse()
+        .ok()
+        .and_then(|l| if l == 0 { None } else { Some(l) })
+    });
     if self.config.unsafe_response {
       content_length = None;
     }
