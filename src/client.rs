@@ -655,14 +655,14 @@ impl ClientBuilder {
   }
   /// Set a timeout for only the connect phase of a `Client`.
   ///
-  /// Default is `None`.
+  /// Default is 10 seconds.
   pub fn connect_timeout(mut self, timeout: Option<Duration>) -> ClientBuilder {
     self.config.connect_timeout = timeout;
     self
   }
   /// Set a timeout for only the read phase of a `Client`.
   ///
-  /// Default is `None`.
+  /// Default is 30 seconds.
   pub fn read_timeout(mut self, timeout: Option<Duration>) -> ClientBuilder {
     self.config.read_timeout = timeout;
     self
@@ -845,8 +845,8 @@ impl Default for Config {
   fn default() -> Self {
     Self {
       timeout: Some(Duration::from_secs(30)),
-      connect_timeout: None,
-      read_timeout: None,
+      connect_timeout: Some(Duration::from_secs(10)),
+      read_timeout: Some(Duration::from_secs(30)),
       headers: Default::default(),
       referer: false,
       proxy: None,

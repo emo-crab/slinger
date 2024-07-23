@@ -33,9 +33,9 @@ impl Default for ConnectorBuilder {
     Self {
       hostname_verification: true,
       certs_verification: true,
-      read_timeout: None,
-      write_timeout: None,
-      connect_timeout: None,
+      read_timeout: Some(Duration::from_secs(30)),
+      write_timeout: Some(Duration::from_secs(30)),
+      connect_timeout: Some(Duration::from_secs(10)),
       nodelay: false,
       #[cfg(feature = "tls")]
       tls_sni: true,
@@ -107,7 +107,7 @@ impl ConnectorBuilder {
   /// successful read. This is more appropriate for detecting stalled
   /// connections when the size isn't known beforehand.
   ///
-  /// Default is no timeout.
+  /// Default is 30 seconds.
   pub fn read_timeout(mut self, timeout: Option<Duration>) -> ConnectorBuilder {
     self.read_timeout = timeout;
     self
@@ -118,14 +118,14 @@ impl ConnectorBuilder {
   /// successful read. This is more appropriate for detecting stalled
   /// connections when the size isn't known beforehand.
   ///
-  /// Default is no timeout.
+  /// Default is 30 seconds.
   pub fn write_timeout(mut self, timeout: Option<Duration>) -> ConnectorBuilder {
     self.write_timeout = timeout;
     self
   }
   /// Set a timeout for only the connect phase of a `Client`.
   ///
-  /// Default is `None`.
+  /// Default is 10 seconds.
   ///
   /// # Note
   ///
