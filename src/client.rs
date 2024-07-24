@@ -510,8 +510,6 @@ impl ClientBuilder {
   ///
   /// This is the same as `Client::builder()`.
   pub fn new() -> ClientBuilder {
-    let mut headers: HeaderMap<HeaderValue> = HeaderMap::with_capacity(2);
-    headers.insert(http::header::ACCEPT, HeaderValue::from_static("*/*"));
     ClientBuilder {
       config: Config::default(),
     }
@@ -537,10 +535,13 @@ impl ClientBuilder {
     connector_builder = connector_builder.nodelay(config.nodelay);
     #[cfg(feature = "tls")]
     {
-      connector_builder = connector_builder.hostname_verification(config.hostname_verification);
-      connector_builder = connector_builder.certs_verification(config.certs_verification);
-      connector_builder = connector_builder.certificate(config.root_certs);
-      connector_builder = connector_builder.tls_sni(config.tls_sni);
+      connector_builder = connector_builder
+        .hostname_verification(config.hostname_verification)
+        .certs_verification(config.certs_verification)
+        .certificate(config.root_certs)
+        .tls_sni(config.tls_sni)
+        .min_tls_version(config.min_tls_version)
+        .max_tls_version(config.max_tls_version);
       if let Some(identity) = config.identity {
         connector_builder = connector_builder.identity(identity);
       }
@@ -803,6 +804,32 @@ impl ClientBuilder {
     self.config.cookie_store = Some(cookie_store as _);
     self
   }
+  /// Set the minimum required TLS version for connections.
+  ///
+  /// By default, the `native_tls::Protocol` default is used.
+  ///
+  /// # Optional
+  ///
+  /// This requires the optional `tls`
+  /// feature to be enabled.
+  #[cfg(feature = "tls")]
+  pub fn min_tls_version(mut self, version: Option<native_tls::Protocol>) -> ClientBuilder {
+    self.config.min_tls_version = version;
+    self
+  }
+  /// Set the maximum required TLS version for connections.
+  ///
+  /// By default, the `native_tls::Protocol` default is used.
+  ///
+  /// # Optional
+  ///
+  /// This requires the optional `tls`
+  /// feature to be enabled.
+  #[cfg(feature = "tls")]
+  pub fn max_tls_version(mut self, version: Option<native_tls::Protocol>) -> ClientBuilder {
+    self.config.max_tls_version = version;
+    self
+  }
 }
 #[derive(Clone)]
 struct Config {
@@ -821,6 +848,10 @@ struct Config {
   certs_verification: bool,
   #[cfg(feature = "tls")]
   tls_sni: bool,
+  #[cfg(feature = "tls")]
+  min_tls_version: Option<native_tls::Protocol>,
+  #[cfg(feature = "tls")]
+  max_tls_version: Option<native_tls::Protocol>,
   redirect_policy: Policy,
   #[cfg(feature = "cookie")]
   cookie_store: Option<Arc<dyn cookies::CookieStore>>,
@@ -859,6 +890,10 @@ impl Default for Config {
       certs_verification: false,
       #[cfg(feature = "tls")]
       tls_sni: true,
+      #[cfg(feature = "tls")]
+      min_tls_version: None,
+      #[cfg(feature = "tls")]
+      max_tls_version: None,
       redirect_policy: Policy::Limit(10),
       #[cfg(feature = "cookie")]
       cookie_store: None,

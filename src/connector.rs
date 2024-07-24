@@ -18,6 +18,10 @@ pub struct ConnectorBuilder {
   read_timeout: Option<Duration>,
   write_timeout: Option<Duration>,
   connect_timeout: Option<Duration>,
+  #[cfg(feature = "tls")]
+  min_tls_version: Option<native_tls::Protocol>,
+  #[cfg(feature = "tls")]
+  max_tls_version: Option<native_tls::Protocol>,
   nodelay: bool,
   #[cfg(feature = "tls")]
   tls_sni: bool,
@@ -36,6 +40,10 @@ impl Default for ConnectorBuilder {
       read_timeout: Some(Duration::from_secs(30)),
       write_timeout: Some(Duration::from_secs(30)),
       connect_timeout: Some(Duration::from_secs(10)),
+      #[cfg(feature = "tls")]
+      min_tls_version: None,
+      #[cfg(feature = "tls")]
+      max_tls_version: None,
       nodelay: false,
       #[cfg(feature = "tls")]
       tls_sni: true,
@@ -146,6 +154,32 @@ impl ConnectorBuilder {
     self.proxy = addr;
     self
   }
+  /// Set the minimum required TLS version for connections.
+  ///
+  /// By default, the `native_tls::Protocol` default is used.
+  ///
+  /// # Optional
+  ///
+  /// This requires the optional `tls`
+  /// feature to be enabled.
+  #[cfg(feature = "tls")]
+  pub fn min_tls_version(mut self, version: Option<native_tls::Protocol>) -> ConnectorBuilder {
+    self.min_tls_version = version;
+    self
+  }
+  /// Set the maximum required TLS version for connections.
+  ///
+  /// By default, the `native_tls::Protocol` default is used.
+  ///
+  /// # Optional
+  ///
+  /// This requires the optional `tls`
+  /// feature to be enabled.
+  #[cfg(feature = "tls")]
+  pub fn max_tls_version(mut self, version: Option<native_tls::Protocol>) -> ConnectorBuilder {
+    self.max_tls_version = version;
+    self
+  }
 }
 
 impl ConnectorBuilder {
@@ -157,7 +191,9 @@ impl ConnectorBuilder {
       let mut tls_builder = binding
         .use_sni(self.tls_sni)
         .danger_accept_invalid_hostnames(!self.hostname_verification)
-        .danger_accept_invalid_certs(!self.certs_verification);
+        .danger_accept_invalid_certs(!self.certs_verification)
+        .min_protocol_version(self.min_tls_version)
+        .max_protocol_version(self.max_tls_version);
       for c in self.certificate.iter() {
         tls_builder = tls_builder.add_root_certificate(c.clone());
       }

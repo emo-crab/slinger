@@ -23,7 +23,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
       "https://dh1024.badssl.com/",
     ];
 
-    let client = ClientBuilder::new().build().unwrap();
+    let client = ClientBuilder::new()
+      .min_tls_version(Some(native_tls::Protocol::Tlsv10))
+      .build()
+      .unwrap();
     for url in urls {
       println!("{}", url);
       let resp = client.get(url).send()?;
