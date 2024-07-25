@@ -1,16 +1,16 @@
 use bytes::Bytes;
 use http::header::SET_COOKIE;
 use http::HeaderValue;
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::fmt::Debug;
 use std::net::IpAddr;
 use std::str::FromStr;
 use std::sync::RwLock;
 use std::time::SystemTime;
 
-type NameMap = HashMap<String, Cookie<'static>>;
-type PathMap = HashMap<String, NameMap>;
-type DomainMap = HashMap<String, PathMap>;
+type NameMap = BTreeMap<String, Cookie<'static>>;
+type PathMap = BTreeMap<String, NameMap>;
+type DomainMap = BTreeMap<String, PathMap>;
 
 #[derive(Debug, Default)]
 pub struct Jar(RwLock<CookieStores>);

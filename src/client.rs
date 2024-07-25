@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::fmt::{Debug, Formatter};
 use std::io::{BufReader, Write};
 use std::path::PathBuf;
@@ -274,7 +274,7 @@ impl Client {
     let mut request = request.into();
     let mut cur_uri = request.uri().clone();
     let mut uris = vec![];
-    let mut conn: HashMap<String, Socket> = HashMap::new();
+    let mut conn: BTreeMap<String, Socket> = BTreeMap::new();
     // 连接一次，同一个主机地址下复用socket连接
     let uniq_key = |u: &http::Uri| -> String {
       let scheme = u.scheme_str().unwrap_or_default();
