@@ -55,6 +55,7 @@ impl Default for ConnectorBuilder {
     }
   }
 }
+
 impl ConnectorBuilder {
   /// Controls the use of hostname verification.
   ///
@@ -264,7 +265,7 @@ impl Connector {
     let i = match stream {
       Socket::TCP(s) => {
         let mut stream = self.tls.connect(domain, s);
-        while let Err(HandshakeError::WouldBlock(mid_handshake)) = stream {
+        if let Err(HandshakeError::WouldBlock(mid_handshake)) = stream {
           stream = mid_handshake.handshake();
         }
         Socket::TLS(stream?)
