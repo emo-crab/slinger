@@ -1,13 +1,41 @@
+use std::str::FromStr;
+
 use slinger::record::HTTPRecord;
 use slinger::ClientBuilder;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+  customize().unwrap();
   limit(3).unwrap();
   only_same_host().unwrap();
   jump().unwrap();
   Ok(())
 }
+fn custom(attempt: slinger::redirect::Attempt) -> slinger::redirect::Action {
+  let s = attempt
+    .response()
+    .body()
+    .as_ref()
+    .unwrap()
+    .to_string()
+    .trim()
+    .to_string();
+  if s == *"slinger" {
+    let u = http::Uri::from_str(format!("http://httpbin.org/get?{}=awesome", &s).trim()).unwrap();
+    slinger::redirect::Action::Follow(u)
+  } else {
+    slinger::redirect::Action::None
+  }
+}
 
+fn customize() -> Result<(), Box<dyn std::error::Error>> {
+  let redirect = slinger::redirect::Policy::Custom(custom);
+  let client = ClientBuilder::new().redirect(redirect).build().unwrap();
+  let resp = client
+    .get("http://httpbin.org/base64/c2xpbmdlcgo%3D")
+    .send()?;
+  assert!(resp.text().unwrap_or_default().contains("slinger=awesome"));
+  Ok(())
+}
 fn limit(max_redirect: usize) -> Result<(), Box<dyn std::error::Error>> {
   let redirect = slinger::redirect::Policy::Limit(max_redirect);
   let client = ClientBuilder::new().redirect(redirect).build().unwrap();

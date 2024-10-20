@@ -1,6 +1,8 @@
+use crate::Response;
 use http::header::{AUTHORIZATION, COOKIE, PROXY_AUTHORIZATION, WWW_AUTHENTICATE};
-use http::{HeaderMap, StatusCode};
-
+use http::HeaderMap;
+use std::path::PathBuf;
+use std::str::FromStr;
 /// A type that controls the policy on how to handle the following of redirects.
 ///
 /// The default value will catch redirect loops, and has a maximum of 10
@@ -20,22 +22,23 @@ pub enum Policy {
   None,
 }
 
-/// A type that holds information on the next request and previous requests
+/// A type that holds information on the current response and previous requests
 /// in redirect chain.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Attempt<'a> {
-  status: StatusCode,
-  next: &'a http::Uri,
+  response: &'a Response,
   previous: &'a [http::Uri],
 }
 
 /// An action to perform when a redirect status code is found.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Action {
-  /// Follow
-  Follow,
+  /// Follow next url
+  Follow(http::Uri),
   /// Stop
-  Stop,
+  Stop(http::Uri),
+  /// None
+  None,
 }
 
 impl Policy {
@@ -71,12 +74,15 @@ impl Policy {
   /// # fn run() -> Result<(), Error> {
   /// let custom = redirect::Policy::custom(|attempt| {
   ///     if attempt.previous().len() > 5 {
-  ///         attempt.stop()
+  ///         attempt.none()
   ///     } else if attempt.url().host() == Some("example.domain") {
   ///         // prevent redirects to 'example.domain'
-  ///         attempt.stop()
+  ///         attempt.none()
   ///     } else {
-  ///         attempt.follow()
+  ///         match attempt.default_redirect(){
+  ///           Some(next)=> attempt.follow(next),
+  ///           None => attempt.none()
+  ///         }
   ///     }
   /// });
   /// let client = slinger::Client::builder()
@@ -98,28 +104,22 @@ impl Policy {
   pub fn redirect(&self, attempt: Attempt) -> Action {
     match self {
       Policy::Custom(ref custom) => custom(attempt),
-      Policy::Limit(max) => {
-        if attempt.previous.len() >= *max {
-          attempt.stop()
-        } else {
-          attempt.follow()
+      Policy::Limit(max) => match attempt.default_redirect() {
+        Some(next) => {
+          if attempt.previous.len() >= *max {
+            attempt.stop(next)
+          } else {
+            attempt.follow(next)
+          }
         }
-      }
-      Policy::None => attempt.stop(),
+        None => attempt.none(),
+      },
+      Policy::None => attempt.none(),
     }
   }
 
-  pub(crate) fn check(
-    &self,
-    status: StatusCode,
-    next: &http::Uri,
-    previous: &[http::Uri],
-  ) -> Action {
-    self.redirect(Attempt {
-      status,
-      next,
-      previous,
-    })
+  pub(crate) fn check(&self, response: &Response, previous: &[http::Uri]) -> Action {
+    self.redirect(Attempt { response, previous })
   }
 }
 
@@ -131,46 +131,74 @@ impl Default for Policy {
 
 impl<'a> Attempt<'a> {
   /// Get the type of redirect.
-  pub fn status(&self) -> StatusCode {
-    self.status
+  pub fn response(&self) -> &Response {
+    self.response
   }
-  /// Get the next URL to redirect to.
+  /// Get the type of redirect.
   pub fn url(&self) -> &http::Uri {
-    self.next
+    self.response.uri()
   }
   /// Get the list of previous URLs that have already been requested in this chain.
   pub fn previous(&self) -> &[http::Uri] {
     self.previous
   }
   /// Returns an action meaning slinger should follow the next URL.
-  pub fn follow(self) -> Action {
-    Action::Follow
+  pub fn follow(self, next: http::Uri) -> Action {
+    Action::Follow(next)
   }
   /// Returns an action meaning slinger should not follow the next URL.
-  ///
-  /// The 30x response will be returned as the `Ok` result.
-  pub fn stop(self) -> Action {
-    Action::Stop
+  pub fn stop(self, next: http::Uri) -> Action {
+    Action::Stop(next)
+  }
+  /// Returns an action meaning slinger should not follow the next URL.
+  pub fn none(self) -> Action {
+    Action::None
+  }
+  /// default get next redirect from response
+  pub fn default_redirect(&self) -> Option<http::Uri> {
+    // 在请求头获取下一跳URL
+    let cur_uri = self.response.uri();
+    let loc = self
+      .response
+      .headers()
+      .get(http::header::LOCATION)
+      .and_then(|val| {
+        let val = val.to_str().ok()?;
+        if val.starts_with("https://") || val.starts_with("http://") {
+          http::Uri::from_str(val).ok()
+        } else {
+          let path = PathBuf::from(cur_uri.path()).join(val);
+          http::Uri::builder()
+            .scheme(cur_uri.scheme_str().unwrap_or_default())
+            .authority(cur_uri.authority()?.as_str())
+            .path_and_query(path.to_string_lossy().as_ref())
+            .build()
+            .ok()
+        }
+      });
+    loc
   }
 }
 
 /// only_same_host
 pub fn only_same_host(attempt: Attempt) -> Action {
-  if let Some(p) = attempt.previous().last() {
-    // 如果上一个链接的主机和当前主机一样可以跟随跳转
-    if p.host() == attempt.url().host() {
-      if attempt.previous().len() > 10 {
-        // 前后同主机，但是超过最大跳转
-        attempt.stop()
+  match attempt.default_redirect() {
+    Some(next) => {
+      let p = attempt.url();
+      // 如果上一个链接的主机和当前主机一样可以跟随跳转
+      if p.host() == next.host() {
+        if attempt.previous.len() > 10_usize {
+          // 前后同主机，但是超过最大跳转
+          attempt.stop(next)
+        } else {
+          attempt.follow(next)
+        }
       } else {
-        attempt.follow()
+        // 前后主机不同，取消跳转
+        attempt.stop(next)
       }
-    } else {
-      // 前后主机不同，取消跳转
-      attempt.stop()
     }
-  } else {
-    attempt.follow()
+    None => Action::None,
   }
 }
 

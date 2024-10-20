@@ -1,7 +1,6 @@
 use std::collections::BTreeMap;
 use std::fmt::{Debug, Formatter};
 use std::io::{BufReader, Write};
-use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -370,29 +369,13 @@ impl Client {
         next: None,
       };
       // 如果要跳转，获取进入跳转策略流程
-      if should_redirect {
-        // 在请求头获取下一跳URL
-        let loc = response
-          .headers()
-          .get(http::header::LOCATION)
-          .and_then(|val| {
-            let val = val.to_str().ok()?;
-            if val.starts_with("https://") || val.starts_with("http://") {
-              http::Uri::from_str(val).ok()
-            } else {
-              let path = PathBuf::from(cur_uri.path()).join(val);
-              http::Uri::builder()
-                .scheme(cur_uri.scheme_str().unwrap_or_default())
-                .authority(cur_uri.authority()?.as_str())
-                .path_and_query(path.to_string_lossy().as_ref())
-                .build()
-                .ok()
-            }
-          });
-        redirect_info.next.clone_from(&loc);
-        response.extensions_mut().insert(redirect_info);
-        // 清除来源
-        if let Some(loc) = loc {
+      // 生成策略
+      uris.push(cur_uri.clone());
+      let action = self.inner.redirect_policy.check(&response, &uris);
+      match action {
+        Action::Follow(loc) => {
+          redirect_info.next = Some(loc.clone());
+          // 添加referer
           if self.inner.referer {
             if let Some(referer) = make_referer(&loc, &cur_uri) {
               response
@@ -400,32 +383,21 @@ impl Client {
                 .insert(http::header::REFERER, referer);
             }
           }
-          uris.push(cur_uri);
-          // 生成策略
-          let action =
-            self
-              .inner
-              .redirect_policy
-              .check(response.status_code(), &loc, uris.as_slice());
-          match action {
-            Action::Follow => {
-              cur_uri = loc;
-              *request.uri_mut() =
-                http::Uri::from_str(&cur_uri.to_string()).map_err(http::Error::from)?;
-              let mut headers = std::mem::replace(response.headers_mut(), HeaderMap::new());
-              remove_sensitive_headers(&mut headers, &cur_uri, uris.as_slice());
-              record.record_response(&response);
-              records.push(record);
-              continue;
-            }
-            Action::Stop => {
-              record.record_response(&response);
-              records.push(record);
-              break;
-            }
-          }
+          cur_uri = loc;
+          *request.uri_mut() =
+            http::Uri::from_str(&cur_uri.to_string()).map_err(http::Error::from)?;
+          let mut headers = std::mem::replace(response.headers_mut(), HeaderMap::new());
+          remove_sensitive_headers(&mut headers, &cur_uri, uris.as_slice());
+          record.record_response(&response);
+          records.push(record);
+          continue;
         }
+        Action::Stop(next) => {
+          redirect_info.next = Some(next.clone());
+        }
+        Action::None => {}
       }
+      response.extensions_mut().insert(redirect_info);
       record.record_response(&response);
       records.push(record);
       break;

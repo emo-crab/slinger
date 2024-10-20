@@ -435,7 +435,7 @@ impl<T: Read> ResponseBuilder<T> {
     let mut version = http::Version::default();
     let mut sc = http::StatusCode::default();
     let (mut vf, mut sf) = (false, false);
-    for (index, vc) in buffer.splitn(3, |c| c == ' ').enumerate() {
+    for (index, vc) in buffer.splitn(3, ' ').enumerate() {
       if vc.is_empty() {
         return Err(new_io_error(
           std::io::ErrorKind::InvalidData,
