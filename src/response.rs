@@ -512,11 +512,14 @@ impl<T: Read> ResponseBuilder<T> {
       if te == "chunked" {
         body = self.read_chunked_body()?;
       }
-    } else if let Some(mut cl) = content_length {
-      // 如果有最大读取限制，取一个最小的长度
-      if let Some(max_read) = self.config.max_read {
-        cl = std::cmp::min(cl, max_read);
-      }
+    } else {
+      let limits = content_length.map(|x| {
+        if let Some(max) = self.config.max_read {
+          std::cmp::min(x, max)
+        } else {
+          x
+        }
+      });
       let mut buffer = vec![0; 12]; // 定义一个缓冲区
       let mut total_bytes_read = 0;
       let mut start = Instant::now();
@@ -545,8 +548,10 @@ impl<T: Read> ResponseBuilder<T> {
           Err(_err) => break,
         }
         // 检查是否读取到了全部数据，如果是，则退出循环
-        if total_bytes_read >= cl as usize {
-          break;
+        if let Some(limit) = limits {
+          if total_bytes_read >= limit as usize {
+            break;
+          }
         }
       }
     }
