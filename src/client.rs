@@ -312,9 +312,6 @@ impl Client {
       };
       if let Some(cv) = response.headers().get(http::header::CONNECTION) {
         match cv.to_str().unwrap_or_default() {
-          "close" => {
-            conn.remove(&uniq_key(&cur_uri));
-          }
           "keep-alive" => {
             if let Some(s) = conn.get_mut(&uniq_key(&cur_uri)) {
               if s.peer_addr().is_err() {
@@ -322,8 +319,12 @@ impl Client {
               }
             }
           }
-          _ => {}
+          _ => {
+            conn.remove(&uniq_key(&cur_uri));
+          }
         }
+      } else {
+        conn.remove(&uniq_key(&cur_uri));
       }
       // 原始请求不跳转
       if request.raw_request().is_some() {
