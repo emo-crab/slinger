@@ -281,6 +281,8 @@ impl Client {
       let port = u.port_u16().unwrap_or_default();
       format!("{}{}{}", scheme, host, port)
     };
+    // 先默认尝试复用连接
+    let mut keepalive = true;
     loop {
       let mut record = HTTPRecord::default();
       for (k, v) in self.inner.header.iter() {
@@ -297,6 +299,17 @@ impl Client {
             add_cookie_header(&mut request, &**cookie_store);
           }
         }
+      }
+      // 配置了keepalive和服务器支持复用才设置请求头
+      if self.inner.keepalive && keepalive {
+        request.headers_mut().insert(
+          http::header::CONNECTION,
+          HeaderValue::from_static("keep-alive"),
+        );
+      } else {
+        request
+          .headers_mut()
+          .insert(http::header::CONNECTION, HeaderValue::from_static("close"));
       }
       record.record_request(&request);
       let socket = conn
@@ -318,13 +331,20 @@ impl Client {
                 *s = self.inner.connector.connect_with_uri(&cur_uri)?;
               }
             }
+            if !self.inner.keepalive {
+              conn.remove(&uniq_key(&cur_uri));
+            } else {
+              keepalive = true;
+            }
           }
           _ => {
             conn.remove(&uniq_key(&cur_uri));
+            keepalive = false;
           }
         }
       } else {
         conn.remove(&uniq_key(&cur_uri));
+        keepalive = false;
       }
       // 原始请求不跳转
       if request.raw_request().is_some() {
@@ -522,6 +542,7 @@ impl ClientBuilder {
     let connector = connector_builder.build()?;
     Ok(Client {
       inner: ClientRef {
+        keepalive: config.keepalive,
         timeout: config.timeout,
         #[cfg(feature = "cookie")]
         cookie_store: config.cookie_store,
@@ -648,6 +669,14 @@ impl ClientBuilder {
   /// Default is `true`.
   pub fn tcp_nodelay(mut self, enabled: bool) -> ClientBuilder {
     self.config.nodelay = enabled;
+    self
+  }
+  // HTTP keepalive options
+
+  ///
+  /// Default is `false`.
+  pub fn keepalive(mut self, keepalive: bool) -> ClientBuilder {
+    self.config.keepalive = keepalive;
     self
   }
   #[cfg(feature = "tls")]
@@ -813,6 +842,7 @@ struct Config {
   referer: bool,
   proxy: Option<Proxy>,
   nodelay: bool,
+  keepalive: bool,
   #[cfg(feature = "tls")]
   root_certs: Vec<Certificate>,
   #[cfg(feature = "tls")]
@@ -839,6 +869,7 @@ impl Debug for Config {
       .field("proxy", &self.proxy)
       .field("timeout", &self.timeout)
       .field("nodelay", &self.nodelay)
+      .field("keepalive", &self.keepalive)
       .field("hostname_verification", &self.hostname_verification)
       .field("certs_verification", &self.certs_verification)
       .field("redirect_policy", &self.redirect_policy)
@@ -855,6 +886,7 @@ impl Default for Config {
       referer: false,
       proxy: None,
       nodelay: false,
+      keepalive: false,
       #[cfg(feature = "tls")]
       root_certs: vec![],
       #[cfg(feature = "tls")]
@@ -876,6 +908,7 @@ impl Default for Config {
 
 #[derive(Clone, Debug)]
 struct ClientRef {
+  keepalive: bool,
   timeout: Option<Duration>,
   #[cfg(feature = "cookie")]
   cookie_store: Option<Arc<dyn cookies::CookieStore>>,
