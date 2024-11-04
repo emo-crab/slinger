@@ -429,50 +429,96 @@ impl<T: Read> ResponseBuilder<T> {
       config,
     }
   }
+  fn read_lines(&mut self) -> Option<Vec<u8>> {
+    let mut lines = Vec::new();
+    let mut buffer = vec![0; 1]; // 定义一个缓冲区
+    let mut total_bytes_read = 0;
+    let mut start = Instant::now();
+    let timeout = self.config.timeout;
+    loop {
+      match self.reader.read(&mut buffer) {
+        Ok(0) => break,
+        Ok(n) => {
+          lines.extend_from_slice(&buffer[..n]);
+          total_bytes_read += n;
+          // 当有读取到数据的时候重置计时器
+          start = Instant::now();
+          if buffer[0] == b'\n' {
+            break;
+          }
+        }
+        Err(ref err) if err.kind() == std::io::ErrorKind::WouldBlock => {
+          // 如果没有数据可读，但超时尚未到达，可以在这里等待或重试
+          // 当已经有数据了或者触发超时就跳出循环，防止防火墙一直把会话挂着不释放
+          if total_bytes_read > 0 {
+            break;
+          } else if let Some(to) = timeout {
+            if start.elapsed() > to {
+              break;
+            }
+          }
+          std::thread::sleep(Duration::from_micros(100));
+        }
+        Err(_err) => break,
+      }
+      // 检查是否读取到了全部数据，如果是，则退出循环
+      if let Some(limit) = self.config.max_read {
+        if total_bytes_read >= limit as usize {
+          break;
+        }
+      }
+    }
+    Some(lines)
+  }
   fn parser_version(&mut self) -> Result<(http::Version, http::StatusCode)> {
-    let mut buffer = String::new();
-    self.reader.read_line(&mut buffer)?;
-    let mut version = http::Version::default();
-    let mut sc = http::StatusCode::default();
     let (mut vf, mut sf) = (false, false);
-    for (index, vc) in buffer.splitn(3, ' ').enumerate() {
-      if vc.is_empty() {
+    if let Some(lines) = self.read_lines() {
+      let mut version = http::Version::default();
+      let mut sc = http::StatusCode::default();
+      for (index, vc) in lines.splitn(3, |b| b == &b' ').enumerate() {
+        if vc.is_empty() {
+          return Err(new_io_error(
+            std::io::ErrorKind::InvalidData,
+            "invalid http version and status_code data",
+          ));
+        }
+        match index {
+          0 => {
+            version = match vc {
+              b"HTTP/0.9" => http::Version::HTTP_09,
+              b"HTTP/1.0" => http::Version::HTTP_10,
+              b"HTTP/1.1" => http::Version::HTTP_11,
+              b"HTTP/2.0" => http::Version::HTTP_2,
+              b"HTTP/3.0" => http::Version::HTTP_3,
+              _ => {
+                return Err(new_io_error(
+                  std::io::ErrorKind::InvalidData,
+                  "invalid http version",
+                ));
+              }
+            };
+            vf = true;
+          }
+          1 => {
+            sc = http::StatusCode::try_from(vc).map_err(|x| Error::Http(http::Error::from(x)))?;
+            sf = true;
+          }
+          _ => {}
+        }
+      }
+      if !(vf && sf) {
         return Err(new_io_error(
           std::io::ErrorKind::InvalidData,
           "invalid http version and status_code data",
         ));
       }
-      match index {
-        0 => {
-          version = match vc {
-            "HTTP/0.9" => http::Version::HTTP_09,
-            "HTTP/1.0" => http::Version::HTTP_10,
-            "HTTP/1.1" => http::Version::HTTP_11,
-            "HTTP/2.0" => http::Version::HTTP_2,
-            "HTTP/3.0" => http::Version::HTTP_3,
-            _ => {
-              return Err(new_io_error(
-                std::io::ErrorKind::InvalidData,
-                "invalid http version",
-              ));
-            }
-          };
-          vf = true;
-        }
-        1 => {
-          sc = http::StatusCode::try_from(vc).map_err(|x| Error::Http(http::Error::from(x)))?;
-          sf = true;
-        }
-        _ => {}
-      }
-    }
-    if !(vf && sf) {
-      return Err(new_io_error(
+      Ok((version, sc))
+    } else {
+      Err(new_io_error(
         std::io::ErrorKind::InvalidData,
         "invalid http version and status_code data",
-      ));
+      ))
     }
-    Ok((version, sc))
   }
   fn read_headers(&mut self) -> http::HeaderMap {
     // 读取请求头
