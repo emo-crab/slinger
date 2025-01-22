@@ -31,7 +31,7 @@ opt-level = 3
 
 
 [dependencies]
-thiserror = "1"
+thiserror = "2"
 http = { version = "1.1.0" }
 percent-encoding = "2.1"
 socket2 = "0.5.5"
