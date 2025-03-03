@@ -113,7 +113,7 @@ impl From<&Request> for CommandRecord {
         command.push_str(" -d ");
         command.push_str(&format!(
           "'{}'\\\r\n",
-          Bytes::from(body.to_vec()).escape_ascii().to_string()
+          Bytes::from(body.to_vec()).escape_ascii()
         ));
       }
       command.push(' ');
