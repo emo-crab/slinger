@@ -98,7 +98,7 @@ impl fmt::Debug for Body {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     match String::from_utf8(self.inner.to_vec()) {
       Ok(s) => fmt::Display::fmt(&s, f),
-      Err(_err) => fmt::Debug::fmt(&self.inner, f),
+      Err(_err) => fmt::Display::fmt(&self.inner.escape_ascii(), f),
     }
   }
 }
@@ -107,7 +107,7 @@ impl fmt::Display for Body {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     match String::from_utf8(self.inner.to_vec()) {
       Ok(s) => fmt::Display::fmt(&s, f),
-      Err(_err) => fmt::Debug::fmt(&self.inner, f),
+      Err(_err) => fmt::Display::fmt(&self.inner.escape_ascii(), f),
     }
   }
 }
