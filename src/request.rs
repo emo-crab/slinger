@@ -40,7 +40,7 @@ impl Debug for Request {
     if let Some(raw) = &self.raw_request {
       f.debug_struct("RawRequest")
         .field("uri", &self.uri)
-        .field("raw", &raw.raw.escape_ascii())
+        .field("raw", &raw.raw.escape_ascii().to_string())
         .field("unsafe_raw", &raw.unsafe_raw)
         .finish()
     } else {
