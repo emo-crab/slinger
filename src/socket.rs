@@ -1,136 +1,110 @@
 #[cfg(feature = "tls")]
-use native_tls::TlsStream;
-#[cfg(feature = "tls")]
-use openssl::x509::X509;
-use socket2::Socket as RawSocket;
-use std::fmt::Arguments;
-use std::io;
-use std::io::{IoSlice, IoSliceMut, Read, Write};
+use crate::tls::PeerCertificate;
 use std::ops::Deref;
+use std::pin::Pin;
+use std::task::{Context, Poll};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
+use tokio::net::TcpStream;
+#[cfg(feature = "tls")]
+use tokio_rustls::client::TlsStream;
+
 /// Socket
 #[derive(Debug)]
 pub enum Socket {
   /// TCP
-  TCP(RawSocket),
+  TCP(TcpStream),
   #[cfg(feature = "tls")]
   /// TLS
-  TLS(TlsStream<RawSocket>),
+  TLS(TlsStream<TcpStream>),
 }
-
 impl Socket {
   #[cfg(feature = "tls")]
   /// get peer_certificate
-  pub fn peer_certificate(&self) -> Option<X509> {
+  pub fn peer_certificate(&self) -> Option<PeerCertificate> {
     match &self {
       Socket::TCP(_) => None,
-      Socket::TLS(stream) => {
-        if let Ok(Some(peer_certificate)) = stream.peer_certificate() {
-          if let Ok(x509) = X509::from_der(&peer_certificate.to_der().unwrap_or_default()) {
-            return Some(x509);
-          }
-        };
-        None
-      }
+      Socket::TLS(stream) => stream
+        .get_ref()
+        .1
+        .peer_certificates()
+        .and_then(|certs| certs.first())
+        .map(|x| PeerCertificate { inner: x.to_vec() }),
     }
   }
 }
-
 // 实现socket的读写
-impl Read for Socket {
-  #[inline]
-  fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-    match self {
-      Socket::TCP(s) => s.read(buf),
+impl AsyncRead for Socket {
+  fn poll_read(
+    self: Pin<&mut Self>,
+    cx: &mut Context<'_>,
+    buf: &mut ReadBuf<'_>,
+  ) -> Poll<std::io::Result<()>> {
+    match self.get_mut() {
+      Socket::TCP(stream) => Pin::new(stream).poll_read(cx, buf),
       #[cfg(feature = "tls")]
-      Socket::TLS(t) => t.read(buf),
-    }
-  }
-  #[inline]
-  fn read_vectored(&mut self, buf: &mut [IoSliceMut<'_>]) -> io::Result<usize> {
-    match self {
-      Socket::TCP(s) => s.read_vectored(buf),
-      #[cfg(feature = "tls")]
-      Socket::TLS(t) => t.read_vectored(buf),
-    }
-  }
-  #[inline]
-  fn read_to_end(&mut self, buf: &mut Vec<u8>) -> io::Result<usize> {
-    match self {
-      Socket::TCP(s) => s.read_to_end(buf),
-      #[cfg(feature = "tls")]
-      Socket::TLS(t) => t.read_to_end(buf),
-    }
-  }
-  #[inline]
-  fn read_to_string(&mut self, buf: &mut String) -> io::Result<usize> {
-    match self {
-      Socket::TCP(s) => s.read_to_string(buf),
-      #[cfg(feature = "tls")]
-      Socket::TLS(t) => t.read_to_string(buf),
-    }
-  }
-  #[inline]
-  fn read_exact(&mut self, buf: &mut [u8]) -> io::Result<()> {
-    match self {
-      Socket::TCP(s) => s.read_exact(buf),
-      #[cfg(feature = "tls")]
-      Socket::TLS(t) => t.read_exact(buf),
+      Socket::TLS(stream) => Pin::new(stream).poll_read(cx, buf),
     }
   }
 }
+impl AsyncWrite for Socket {
+  fn poll_write(
+    self: Pin<&mut Self>,
+    cx: &mut Context<'_>,
+    buf: &[u8],
+  ) -> Poll<Result<usize, std::io::Error>> {
+    match self.get_mut() {
+      Socket::TCP(stream) => Pin::new(stream).poll_write(cx, buf),
+      #[cfg(feature = "tls")]
+      Socket::TLS(stream) => Pin::new(stream).poll_write(cx, buf),
+    }
+  }
 
-impl Write for Socket {
-  #[inline]
-  fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-    match self {
-      Socket::TCP(s) => s.write(buf),
+  fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), std::io::Error>> {
+    match self.get_mut() {
+      Socket::TCP(stream) => Pin::new(stream).poll_flush(cx),
       #[cfg(feature = "tls")]
-      Socket::TLS(t) => t.write(buf),
+      Socket::TLS(stream) => Pin::new(stream).poll_flush(cx),
     }
   }
-  #[inline]
-  fn write_vectored(&mut self, buf: &[IoSlice<'_>]) -> io::Result<usize> {
-    match self {
-      Socket::TCP(s) => s.write_vectored(buf),
+  fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), std::io::Error>> {
+    match self.get_mut() {
+      Socket::TCP(stream) => Pin::new(stream).poll_shutdown(cx),
       #[cfg(feature = "tls")]
-      Socket::TLS(t) => t.write_vectored(buf),
-    }
-  }
-  #[inline]
-  fn flush(&mut self) -> io::Result<()> {
-    match self {
-      Socket::TCP(s) => s.flush(),
-      #[cfg(feature = "tls")]
-      Socket::TLS(t) => t.flush(),
-    }
-  }
-  #[inline]
-  fn write_all(&mut self, buf: &[u8]) -> io::Result<()> {
-    match self {
-      Socket::TCP(s) => s.write_all(buf),
-      #[cfg(feature = "tls")]
-      Socket::TLS(t) => t.write_all(buf),
-    }
-  }
-  #[inline]
-  fn write_fmt(&mut self, fmt: Arguments<'_>) -> io::Result<()> {
-    match self {
-      Socket::TCP(s) => s.write_fmt(fmt),
-      #[cfg(feature = "tls")]
-      Socket::TLS(t) => t.write_fmt(fmt),
+      Socket::TLS(stream) => Pin::new(stream).poll_shutdown(cx),
     }
   }
 }
-
+impl Socket {
+  // 自定义的 `read_exact` 方法
+  pub(crate) async fn read_exact(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+    AsyncReadExt::read_exact(self, buf).await
+  }
+  // 自定义的 `read` 方法
+  pub(crate) async fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+    AsyncReadExt::read(self, buf).await
+  }
+}
+impl Socket {
+  // 自定义的 `write_all` 方法
+  pub(crate) async fn write_all(&mut self, buf: &[u8]) -> std::io::Result<()> {
+    AsyncWriteExt::write_all(self, buf).await
+  }
+  pub(crate) async fn flush(&mut self) -> std::io::Result<()> {
+    AsyncWriteExt::flush(self).await
+  }
+  pub(crate) async fn shutdown(&mut self) -> std::io::Result<()> {
+    AsyncWriteExt::shutdown(self).await
+  }
+}
 // 直接暴露socket的全部外部接口
 impl Deref for Socket {
-  type Target = RawSocket;
+  type Target = TcpStream;
 
   fn deref(&self) -> &Self::Target {
     match self {
       Socket::TCP(s) => s,
       #[cfg(feature = "tls")]
-      Socket::TLS(t) => t.get_ref(),
+      Socket::TLS(t) => t.get_ref().0,
     }
   }
 }

@@ -1,29 +1,24 @@
 //! engine error
-
-#[cfg(feature = "tls")]
-use socket2::Socket;
 use std::io::ErrorKind;
 use std::num::ParseIntError;
 use thiserror::Error as ThisError;
-
 /// A `Result` alias where the `Err` case is `slinger::Error`.
 pub type Result<T> = std::result::Result<T, Error>;
-
 /// The Errors that may occur when processing a `slinger`.
 #[derive(ThisError, Debug)]
 pub enum Error {
-  #[cfg(feature = "tls")]
-  /// HandshakeError
-  #[error(transparent)]
-  TlsHandshake(#[from] native_tls::HandshakeError<Socket>),
+  // #[cfg(feature = "tls")]
+  // /// HandshakeError
+  // #[error(transparent)]
+  // TlsHandshake(#[from] tokio_rustls::HandshakeError<Socket>),
   #[error(transparent)]
   #[cfg(feature = "tls")]
   /// native_tls Error
-  NativeTls(#[from] native_tls::Error),
-  #[cfg(feature = "tls")]
-  /// openssl ErrorStack
-  #[error(transparent)]
-  OpenSSl(#[from] openssl::error::ErrorStack),
+  NativeTls(#[from] tokio_rustls::rustls::Error),
+  // #[cfg(feature = "tls")]
+  // /// openssl ErrorStack
+  // #[error(transparent)]
+  // OpenSSl(#[from] openssl::error::ErrorStack),
   /// Error
   #[error(transparent)]
   IO(#[from] std::io::Error),
@@ -78,4 +73,8 @@ impl From<http::header::InvalidHeaderValue> for Error {
 
 pub(crate) fn new_io_error(error_kind: ErrorKind, msg: &str) -> Error {
   Error::IO(std::io::Error::new(error_kind, msg))
+}
+#[cfg(feature = "tls")]
+pub(crate) fn builder<E: Into<Box<dyn std::error::Error + Send + Sync>>>(e: E) -> Error {
+  Error::Other(e.into().to_string())
 }

@@ -384,7 +384,7 @@ impl Request {
 /// A builder to construct the properties of a `Request`.
 ///
 /// To construct a `RequestBuilder`, refer to the `Client` documentation.
-#[derive(Debug)]
+// #[derive(Debug)]
 #[must_use = "RequestBuilder does nothing until you 'send' it"]
 pub struct RequestBuilder {
   client: Client,
@@ -489,20 +489,20 @@ impl RequestBuilder {
   /// ```no_run
   /// # use slinger::Error;
   /// #
-  /// # fn run() -> Result<(), Error> {
+  /// # async fn run() -> Result<(), Error> {
   /// let response = slinger::Client::new()
   ///     .get("https://hyper.rs")
-  ///     .send()?;
+  ///     .send().await?;
   /// # Ok(())
   /// # }
   /// ```
-  pub fn send(self) -> crate::Result<Response> {
+  pub async fn send(self) -> crate::Result<Response> {
     let mut req: Request = self
       .builder
       .body(self.body)
       .map_err(http::Error::from)?
       .into();
     *req.raw_request_mut() = self.raw;
-    self.client.execute(req)
+    self.client.execute(req).await
   }
 }

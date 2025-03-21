@@ -1,14 +1,21 @@
-#[cfg(feature = "tls")]
-use crate::errors::new_io_error;
-use crate::errors::Result;
+use crate::errors::{new_io_error, Result};
 use crate::proxy::{Proxy, ProxySocket};
 use crate::socket::Socket;
 #[cfg(feature = "tls")]
-use native_tls::{Certificate, HandshakeError, Identity, TlsConnector};
+use crate::tls::{Identity, IgnoreHostname, NoVerifier};
+#[cfg(feature = "tls")]
+use crate::{tls, Certificate};
 use socket2::Socket as RawSocket;
 use socket2::{Domain, Protocol, Type};
 use std::net::SocketAddr;
 use std::time::Duration;
+use tokio::net::TcpSocket;
+#[cfg(feature = "tls")]
+use tokio_rustls::rustls;
+#[cfg(feature = "tls")]
+use tokio_rustls::rustls::pki_types::ServerName;
+#[cfg(feature = "tls")]
+use tokio_rustls::TlsConnector;
 
 /// ConnectorBuilder
 #[derive(Clone)]
@@ -19,9 +26,9 @@ pub struct ConnectorBuilder {
   write_timeout: Option<Duration>,
   connect_timeout: Option<Duration>,
   #[cfg(feature = "tls")]
-  min_tls_version: Option<native_tls::Protocol>,
+  min_tls_version: Option<tls::Version>,
   #[cfg(feature = "tls")]
-  max_tls_version: Option<native_tls::Protocol>,
+  max_tls_version: Option<tls::Version>,
   nodelay: bool,
   #[cfg(feature = "tls")]
   tls_sni: bool,
@@ -164,7 +171,7 @@ impl ConnectorBuilder {
   /// This requires the optional `tls`
   /// feature to be enabled.
   #[cfg(feature = "tls")]
-  pub fn min_tls_version(mut self, version: Option<native_tls::Protocol>) -> ConnectorBuilder {
+  pub fn min_tls_version(mut self, version: Option<tls::Version>) -> ConnectorBuilder {
     self.min_tls_version = version;
     self
   }
@@ -177,7 +184,7 @@ impl ConnectorBuilder {
   /// This requires the optional `tls`
   /// feature to be enabled.
   #[cfg(feature = "tls")]
-  pub fn max_tls_version(mut self, version: Option<native_tls::Protocol>) -> ConnectorBuilder {
+  pub fn max_tls_version(mut self, version: Option<tls::Version>) -> ConnectorBuilder {
     self.max_tls_version = version;
     self
   }
@@ -188,20 +195,62 @@ impl ConnectorBuilder {
   pub fn build(&self) -> Result<Connector> {
     #[cfg(feature = "tls")]
     let tls = {
-      let mut binding = TlsConnector::builder();
-      let mut tls_builder = binding
-        .use_sni(self.tls_sni)
-        .danger_accept_invalid_hostnames(!self.hostname_verification)
-        .danger_accept_invalid_certs(!self.certs_verification)
-        .min_protocol_version(self.min_tls_version)
-        .max_protocol_version(self.max_tls_version);
-      for c in self.certificate.iter() {
-        tls_builder = tls_builder.add_root_certificate(c.clone());
+      let mut root_cert_store = rustls::RootCertStore::empty();
+      for cert in self.certificate.clone() {
+        cert.add_to_rustls(&mut root_cert_store)?;
       }
-      if let Some(identity) = &self.identity {
-        tls_builder.identity(identity.clone());
+      let mut versions = rustls::ALL_VERSIONS.to_vec();
+
+      if let Some(min_tls_version) = self.min_tls_version {
+        versions.retain(|&supported_version| {
+          match tls::Version::from_rustls(supported_version.version) {
+            Some(version) => version >= min_tls_version,
+            // Assume it's so new we don't know about it, allow it
+            // (as of writing this is unreachable)
+            None => true,
+          }
+        });
+      }
+
+      if let Some(max_tls_version) = self.max_tls_version {
+        versions.retain(|&supported_version| {
+          match tls::Version::from_rustls(supported_version.version) {
+            Some(version) => version <= max_tls_version,
+            None => false,
+          }
+        });
+      }
+
+      if versions.is_empty() {
+        return Err(crate::errors::builder("empty supported tls versions"));
+      }
+      let provider = rustls::crypto::CryptoProvider::get_default().cloned()
+        .unwrap_or_else(|| std::sync::Arc::new(rustls::crypto::ring::default_provider()));
+      let signature_algorithms = provider.signature_verification_algorithms;
+      let config_builder = rustls::ClientConfig::builder_with_provider(provider.clone())
+        .with_protocol_versions(&versions)
+        .map_err(|_| crate::errors::builder("invalid TLS versions"))?;
+      let config_builder = if !self.certs_verification {
+        config_builder
+          .dangerous()
+          .with_custom_certificate_verifier(std::sync::Arc::new(NoVerifier))
+      } else if !self.hostname_verification {
+        config_builder
+          .dangerous()
+          .with_custom_certificate_verifier(std::sync::Arc::new(IgnoreHostname::new(
+            root_cert_store,
+            signature_algorithms,
+          )))
+      } else {
+        config_builder.with_root_certificates(root_cert_store)
       };
-      tls_builder.build()?
+      let tls = if let Some(id) = self.identity.clone() {
+        id.add_to_rustls(config_builder)?
+      } else {
+        config_builder.with_no_client_auth()
+      };
+      
+      TlsConnector::from(std::sync::Arc::new(tls))
     };
     let conn = Connector {
       connect_timeout: self.connect_timeout,
@@ -217,7 +266,7 @@ impl ConnectorBuilder {
 }
 
 /// Connector
-#[derive(Debug)]
+// #[derive(Debug)]
 pub struct Connector {
   connect_timeout: Option<Duration>,
   nodelay: bool,
@@ -236,43 +285,43 @@ impl PartialEq for Connector {
 
 impl Connector {
   /// Connect to a remote endpoint with addr
-  pub fn connect_with_addr<S: Into<SocketAddr>>(&self, addr: S) -> Result<Socket> {
+  pub async fn connect_with_addr<S: Into<SocketAddr>>(&self, addr: S) -> Result<Socket> {
     let addr = addr.into();
-    let socket = RawSocket::new(Domain::for_address(addr), Type::STREAM, Some(Protocol::TCP))?;
+    let raw_socket = RawSocket::new(Domain::for_address(addr), Type::STREAM, Some(Protocol::TCP))?;
+    raw_socket.set_nonblocking(true)?;
+    raw_socket.set_write_timeout(self.write_timeout)?;
+    raw_socket.set_read_timeout(self.read_timeout)?;
+    let socket = TcpSocket::from_std_stream(raw_socket.into());
     if self.nodelay {
       socket.set_nodelay(self.nodelay)?;
     }
-    socket.set_read_timeout(self.read_timeout)?;
-    socket.set_write_timeout(self.write_timeout)?;
-    match self.connect_timeout {
-      None => {
-        socket.connect(&addr.into())?;
-      }
-      Some(timeout) => {
-        socket.connect_timeout(&addr.into(), timeout)?;
-      }
-    }
-    Ok(Socket::TCP(socket))
+    let s = match self.connect_timeout {
+      None => socket.connect(addr).await?,
+      Some(timeout) => tokio::time::timeout(timeout, socket.connect(addr))
+        .await
+        .map_err(|x| new_io_error(std::io::ErrorKind::TimedOut, &format!("timeout: {}", x)))??,
+    };
+    Ok(Socket::TCP(s))
   }
   /// Connect to a remote endpoint with url
-  pub fn connect_with_uri(&self, target: &http::Uri) -> Result<Socket> {
-    ProxySocket::new(target, &self.proxy).conn_with_connector(self)
+  pub async fn connect_with_uri(&self, target: &http::Uri) -> Result<Socket> {
+    ProxySocket::new(target, &self.proxy)
+      .conn_with_connector(self)
+      .await
   }
   #[cfg(feature = "tls")]
   /// A `Connector` will use transport layer security (TLS) by default to connect to destinations.
-  pub fn upgrade_to_tls(&self, stream: Socket, domain: &str) -> Result<Socket> {
+  pub async fn upgrade_to_tls(&self, stream: Socket, domain: &str) -> Result<Socket> {
     // 上面是原始socket
     let i = match stream {
       Socket::TCP(s) => {
-        let mut stream = self.tls.connect(domain, s);
-        if let Err(HandshakeError::WouldBlock(mid_handshake)) = stream {
-          stream = mid_handshake.handshake();
-        }
-        Socket::TLS(stream?)
+        let domain = ServerName::try_from(domain.to_owned()).unwrap();
+        let stream = self.tls.connect(domain, s).await?;
+        Socket::TLS(stream)
       }
       // 本来就是tls了
       Socket::TLS(_t) => {
-        return Err(new_io_error(
+        return Err(crate::errors::new_io_error(
           std::io::ErrorKind::ConnectionAborted,
           "it's already tls",
         ));

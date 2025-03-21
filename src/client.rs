@@ -1,16 +1,8 @@
 use std::collections::BTreeMap;
 use std::fmt::{Debug, Formatter};
-use std::io::{BufReader, Write};
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
-
-use bytes::Bytes;
-use http::{HeaderMap, HeaderValue, Method, StatusCode};
-#[cfg(feature = "tls")]
-use native_tls::{Certificate, Identity};
-#[cfg(feature = "tls")]
-use openssl::x509::X509;
 
 #[cfg(feature = "cookie")]
 use crate::cookies;
@@ -20,7 +12,11 @@ use crate::record::{HTTPRecord, LocalPeerRecord, RedirectRecord};
 use crate::redirect::{remove_sensitive_headers, Action, Policy};
 use crate::response::{ResponseBuilder, ResponseConfig};
 use crate::socket::Socket;
+#[cfg(feature = "tls")]
+use crate::tls::{self, Certificate, Identity, PeerCertificate};
 use crate::{Connector, ConnectorBuilder, Request, RequestBuilder, Response};
+use bytes::Bytes;
+use http::{HeaderMap, HeaderValue, Method, StatusCode};
 
 /// A `Client` to make Requests with.
 ///
@@ -36,14 +32,14 @@ use crate::{Connector, ConnectorBuilder, Request, RequestBuilder, Response};
 /// ```rust
 /// use slinger::Client;
 /// #
-/// # fn run() -> Result<(), slinger::Error> {
+/// # async fn run() -> Result<(), slinger::Error> {
 /// let client = Client::new();
-/// let resp = client.get("http://httpbin.org/").send()?;
+/// let resp = client.get("http://httpbin.org/").send().await?;
 /// #   Ok(())
 /// # }
 ///
 /// ```
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Client {
   inner: ClientRef,
 }
@@ -232,25 +228,26 @@ impl Client {
   ///
   /// This method fails if there was an error while sending request,
   /// or redirect limit was exhausted.
-  pub fn execute_request(&self, socket: &mut Socket, request: &Request) -> Result<Response> {
+  pub async fn execute_request(&self, socket: &mut Socket, request: &Request) -> Result<Response> {
     let raw: Bytes = request.to_raw();
     #[cfg(feature = "tls")]
-    let mut certificate: Option<X509> = None;
+    let mut peer_certificate: Option<PeerCertificate> = None;
     #[cfg(feature = "tls")]
     {
-      if let Some(x509) = socket.peer_certificate() {
-        certificate = Some(x509);
+      if let Some(pc) = socket.peer_certificate() {
+        peer_certificate = Some(pc);
       }
     }
-    socket.write_all(&raw)?;
-    socket.flush()?;
-    let reader = BufReader::new(socket);
-    let mut irp =
-      ResponseBuilder::new(reader, ResponseConfig::new(request, self.inner.timeout)).build()?;
+    socket.write_all(&raw).await?;
+    socket.flush().await?;
+    let reader = tokio::io::BufReader::new(socket);
+    let mut irp = ResponseBuilder::new(reader, ResponseConfig::new(request, self.inner.timeout))
+      .build()
+      .await?;
     *irp.url_mut() = request.uri().clone();
     #[cfg(feature = "tls")]
     {
-      if let Some(cert) = certificate {
+      if let Some(cert) = peer_certificate {
         irp.extensions_mut().insert(cert);
       }
     }
@@ -268,7 +265,7 @@ impl Client {
   ///
   /// This method fails if there was an error while sending request,
   /// or redirect limit was exhausted.
-  pub fn execute<R: Into<Request>>(&self, request: R) -> Result<Response> {
+  pub async fn execute<R: Into<Request>>(&self, request: R) -> Result<Response> {
     let mut records = vec![];
     let mut request = request.into();
     let mut cur_uri = request.uri().clone();
@@ -314,13 +311,13 @@ impl Client {
       record.record_request(&request);
       let socket = conn
         .entry(uniq_key(&cur_uri))
-        .or_insert(self.inner.connector.connect_with_uri(&cur_uri)?);
-      let mut response = self.execute_request(socket, &request)?;
+        .or_insert(self.inner.connector.connect_with_uri(&cur_uri).await?);
+      let mut response = self.execute_request(socket, &request).await?;
       response.extensions_mut().insert(request.clone());
       if let (Ok(remote_addr), Ok(local_addr)) = (socket.peer_addr(), socket.local_addr()) {
         response.extensions_mut().insert(LocalPeerRecord {
-          remote_addr,
-          local_addr,
+          remote_addr: remote_addr.into(),
+          local_addr: local_addr.into(),
         });
       };
       if let Some(cv) = response.headers().get(http::header::CONNECTION) {
@@ -328,7 +325,7 @@ impl Client {
           "keep-alive" => {
             if let Some(s) = conn.get_mut(&uniq_key(&cur_uri)) {
               if s.peer_addr().is_err() {
-                *s = self.inner.connector.connect_with_uri(&cur_uri)?;
+                *s = self.inner.connector.connect_with_uri(&cur_uri).await?;
               }
             }
             if !self.inner.keepalive {
@@ -423,8 +420,8 @@ impl Client {
       records.push(record);
       break;
     }
-    for (_key, socket) in conn {
-      socket.shutdown(std::net::Shutdown::Both)?;
+    for (_key, mut socket) in conn {
+      socket.shutdown().await?;
     }
     let mut last_response = records
       .last()
@@ -561,12 +558,12 @@ impl ClientBuilder {
   ///
   /// ```rust
   /// # use http::HeaderValue;
-  /// fn doc() -> Result<(), slinger::Error> {
+  /// async fn doc() -> Result<(), slinger::Error> {
   /// let ua = HeaderValue::from_static("XX_UA");
   /// let client = slinger::Client::builder()
   ///     .user_agent(ua)
   ///     .build()?;
-  /// let res = client.get("https://www.rust-lang.org").send()?;
+  /// let res = client.get("https://www.rust-lang.org").send().await?;
   /// # Ok(())
   /// # }
   /// ```
@@ -586,7 +583,7 @@ impl ClientBuilder {
   ///
   /// ```rust
   /// use slinger::http::header;
-  /// # fn build_client() -> Result<(), slinger::Error> {
+  /// # async fn build_client() -> Result<(), slinger::Error> {
   /// let mut headers = header::HeaderMap::new();
   /// headers.insert("X-MY-HEADER", header::HeaderValue::from_static("value"));
   /// headers.insert(header::AUTHORIZATION, header::HeaderValue::from_static("secret"));
@@ -600,7 +597,7 @@ impl ClientBuilder {
   /// let client = slinger::Client::builder()
   ///     .default_headers(headers)
   ///     .build()?;
-  /// let res = client.get("https://www.rust-lang.org").send()?;
+  /// let res = client.get("https://www.rust-lang.org").send().await?;
   /// # Ok(())
   /// # }
   /// ```
@@ -697,7 +694,7 @@ impl ClientBuilder {
   /// let der = std::fs::read("my-cert.der")?;
   ///
   /// // create a certificate
-  /// let cert = slinger::native_tls::Certificate::from_der(&der)?;
+  /// let cert = slinger::tls::Certificate::from_der(&der)?;
   ///
   /// // get a client builder
   /// let client = slinger::Client::builder()
@@ -815,7 +812,7 @@ impl ClientBuilder {
   /// This requires the optional `tls`
   /// feature to be enabled.
   #[cfg(feature = "tls")]
-  pub fn min_tls_version(mut self, version: Option<native_tls::Protocol>) -> ClientBuilder {
+  pub fn min_tls_version(mut self, version: Option<tls::Version>) -> ClientBuilder {
     self.config.min_tls_version = version;
     self
   }
@@ -828,7 +825,7 @@ impl ClientBuilder {
   /// This requires the optional `tls`
   /// feature to be enabled.
   #[cfg(feature = "tls")]
-  pub fn max_tls_version(mut self, version: Option<native_tls::Protocol>) -> ClientBuilder {
+  pub fn max_tls_version(mut self, version: Option<tls::Version>) -> ClientBuilder {
     self.config.max_tls_version = version;
     self
   }
@@ -852,9 +849,9 @@ struct Config {
   #[cfg(feature = "tls")]
   tls_sni: bool,
   #[cfg(feature = "tls")]
-  min_tls_version: Option<native_tls::Protocol>,
+  min_tls_version: Option<tls::Version>,
   #[cfg(feature = "tls")]
-  max_tls_version: Option<native_tls::Protocol>,
+  max_tls_version: Option<tls::Version>,
   redirect_policy: Policy,
   #[cfg(feature = "cookie")]
   cookie_store: Option<Arc<dyn cookies::CookieStore>>,
@@ -906,7 +903,7 @@ impl Default for Config {
   }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 struct ClientRef {
   keepalive: bool,
   timeout: Option<Duration>,
