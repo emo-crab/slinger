@@ -132,7 +132,7 @@ impl AsyncWrite for MaybeTlsStream {
   }
 }
 impl Socket {
-  /// 自定义的 `read_exact` 方法
+  /// Reads all bytes until EOF in this source, appending them to buf.
   pub async fn read_to_string(&mut self, buf: &mut String) -> std::io::Result<usize> {
     match self.read_timeout {
       None => AsyncReadExt::read_to_string(self.deref_mut(), buf).await,
@@ -141,22 +141,21 @@ impl Socket {
       }
     }
   }
-  /// 自定义的 `read_exact` 方法
+  /// Reads all bytes until EOF in this source, placing them into buf.
   pub async fn read_to_end(&mut self, buf: &mut Vec<u8>) -> std::io::Result<usize> {
     match self.read_timeout {
       None => AsyncReadExt::read_to_end(self.deref_mut(), buf).await,
       Some(t) => tokio::time::timeout(t, AsyncReadExt::read_to_end(self.deref_mut(), buf)).await?,
     }
   }
-  /// 自定义的 `read_exact` 方法
+  /// Reads the exact number of bytes required to fill buf.
   pub async fn read_exact(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-    println!("{:?}", self.read_timeout);
     match self.read_timeout {
       None => AsyncReadExt::read_exact(self.deref_mut(), buf).await,
       Some(t) => tokio::time::timeout(t, AsyncReadExt::read_exact(self.deref_mut(), buf)).await?,
     }
   }
-  /// 自定义的 `read` 方法
+  /// Pulls some bytes from this source into the specified buffer, returning how many bytes were read.
   pub async fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
     match self.read_timeout {
       None => AsyncReadExt::read(self.deref_mut(), buf).await,
@@ -165,28 +164,30 @@ impl Socket {
   }
 }
 impl Socket {
-  /// 自定义的 `write_all` 方法
+  /// Writes a buffer into this writer, returning how many bytes were
   pub async fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
     match self.write_timeout {
       None => AsyncWriteExt::write(self.deref_mut(), buf).await,
       Some(t) => tokio::time::timeout(t, AsyncWriteExt::write(self.deref_mut(), buf)).await?,
     }
   }
-  /// 自定义的 `write_all` 方法
+  /// Attempts to write an entire buffer into this writer.
   pub async fn write_all(&mut self, buf: &[u8]) -> std::io::Result<()> {
     match self.write_timeout {
       None => AsyncWriteExt::write_all(self.deref_mut(), buf).await,
       Some(t) => tokio::time::timeout(t, AsyncWriteExt::write_all(self.deref_mut(), buf)).await?,
     }
   }
-  /// 自定义的 `write_all` 方法
+  /// Flushes this output stream, ensuring that all intermediately buffered
+  /// contents reach their destination.
   pub async fn flush(&mut self) -> std::io::Result<()> {
     match self.write_timeout {
       None => AsyncWriteExt::flush(self.deref_mut()).await,
       Some(t) => tokio::time::timeout(t, AsyncWriteExt::flush(self.deref_mut())).await?,
     }
   }
-  /// 自定义的 `write_all` 方法
+  /// Shuts down the output stream, ensuring that the value can be dropped
+  /// cleanly.
   pub async fn shutdown(&mut self) -> std::io::Result<()> {
     match self.write_timeout {
       None => AsyncWriteExt::shutdown(self.deref_mut()).await,
