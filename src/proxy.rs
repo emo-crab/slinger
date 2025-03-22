@@ -7,7 +7,7 @@ use bytes::Bytes;
 use http::uri::Authority;
 use http::HeaderValue;
 use percent_encoding::percent_decode;
-use std::io::{BufReader, Read, Write};
+use std::io::Write;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6, ToSocketAddrs};
 use std::str::FromStr;
 
@@ -185,9 +185,13 @@ where
   let mut buf = b"Basic ".to_vec();
   {
     let mut encoder = EncoderWriter::new(&mut buf, &BASE64_STANDARD);
-    let _ = write!(encoder, "{username}:");
+    encoder
+      .write_fmt(format_args!("{}", &username))
+      .unwrap_or_default();
     if let Some(password) = password {
-      let _ = write!(encoder, "{password}");
+      encoder
+        .write_fmt(format_args!("{}", &password))
+        .unwrap_or_default();
     }
   }
   let mut header = HeaderValue::from_bytes(&buf).expect("base64 is always valid HeaderValue");
@@ -263,11 +267,13 @@ impl HttpProxy {
     Ok(br.to_raw())
   }
   #[allow(clippy::unused_io_amount)]
-  fn read_resp(&self, proxy_socket: &mut Socket) -> Result<Response> {
+  async fn read_resp(&self, proxy_socket: &mut Socket) -> Result<Response> {
     let mut buffer = [0; 128];
-    proxy_socket.read(&mut buffer[..])?;
-    let reader = BufReader::new(buffer.as_slice());
-    let proxy_response = ResponseBuilder::new(reader, Default::default()).build()?;
+    proxy_socket.read(&mut buffer[..]).await?;
+    let reader = tokio::io::BufReader::new(buffer.as_slice());
+    let proxy_response = ResponseBuilder::new(reader, Default::default())
+      .build()
+      .await?;
     if proxy_response.status_code() != http::StatusCode::OK {
       return Err(new_io_error(
         std::io::ErrorKind::NotConnected,
@@ -296,9 +302,9 @@ impl ProxySocket {
     }
   }
   /// Connects to a target server through a connector
-  pub fn conn_with_connector(self, connector: &Connector) -> Result<Socket> {
+  pub async fn conn_with_connector(self, connector: &Connector) -> Result<Socket> {
     let addr = self.get_conn_addr()?;
-    let mut socket = connector.connect_with_addr(addr)?;
+    let mut socket = connector.connect_with_addr(addr).await?;
     match &self.proxy {
       None => {
         let _target_host = self.target.host().ok_or(new_io_error(
@@ -307,7 +313,7 @@ impl ProxySocket {
         ))?;
         #[cfg(feature = "tls")]
         if self.target.scheme() == Some(&http::uri::Scheme::HTTPS) {
-          socket = connector.upgrade_to_tls(socket, _target_host)?;
+          socket = connector.upgrade_to_tls(socket, _target_host).await?;
         }
         Ok(socket)
       }
@@ -330,19 +336,21 @@ impl ProxySocket {
           Proxy::HTTP(h) => {
             #[cfg(feature = "tls")]
             if h.https {
-              socket = connector.upgrade_to_tls(socket, proxy.domain()?)?;
+              socket = connector.upgrade_to_tls(socket, proxy.domain()?).await?;
             }
-            socket.write_all(&h.raw(&format!("{}:{}", target_host, port))?)?;
-            socket.flush()?;
-            h.read_resp(&mut socket)?;
+            socket
+              .write_all(&h.raw(&format!("{}:{}", target_host, port))?)
+              .await?;
+            socket.flush().await?;
+            h.read_resp(&mut socket).await?;
             #[cfg(feature = "tls")]
             if self.target.scheme() == Some(&http::uri::Scheme::HTTPS) {
-              socket = connector.upgrade_to_tls(socket, target_host)?;
+              socket = connector.upgrade_to_tls(socket, target_host).await?;
             }
             Ok(socket)
           }
           Proxy::Socket(s) => {
-            s.conn(&mut socket, &self.target)?;
+            s.conn(&mut socket, &self.target).await?;
             Ok(socket)
           }
         }
@@ -422,17 +430,19 @@ impl Socket5Proxy {
   pub(crate) fn addr(&self) -> SocketAddr {
     self.addr
   }
-  pub(crate) fn conn(&self, socket: &mut Socket, target: &http::Uri) -> Result<()> {
+  pub(crate) async fn conn(&self, socket: &mut Socket, target: &http::Uri) -> Result<()> {
     // 协商认证方式
-    let method = self.version_methods(socket)?;
+    let method = self.version_methods(socket).await?;
     // 确认认证方式
-    let auth_methods = self.which_method_accepted(socket, method)?;
+    let auth_methods = self.which_method_accepted(socket, method).await?;
     // 认证身份
-    self.use_password_auth(socket, auth_methods)?;
+    self.use_password_auth(socket, auth_methods).await?;
     // 发送代理请求
-    self.request_header(socket, target, Socks5Command::TCPConnect)?;
+    self
+      .request_header(socket, target, Socks5Command::TCPConnect)
+      .await?;
     // 连接目标服务器
-    self.read_request_reply(socket)?;
+    self.read_request_reply(socket).await?;
     Ok(())
   }
   /// 首先，客户端向服务器发送一条包含协议版本号和可选验证方法的消息：
@@ -443,7 +453,7 @@ impl Socket5Proxy {
   /// | NMETHODS | 客户端支持的方法数量决定 METHODS 的长度 | unsigned char | 1 | 1 - 255 |
   /// | METHODS | 客户端支持的方法列表一个字节对应一个方法 | unsigned char [] | 可变长度1-255 | 0x02 用户名密码验证 |
   ///
-  fn version_methods(&self, proxy_socket: &mut Socket) -> Result<&AuthenticationMethod> {
+  async fn version_methods(&self, proxy_socket: &mut Socket) -> Result<&AuthenticationMethod> {
     let mut main_method = &AuthenticationMethod::None;
     let mut methods = vec![main_method];
     if let Some(method) = &self.auth {
@@ -453,7 +463,7 @@ impl Socket5Proxy {
     let mut packet = vec![consts::SOCKS5_VERSION, methods.len() as u8];
     let auth: Vec<u8> = methods.into_iter().map(|l| l.into()).collect::<Vec<_>>();
     packet.extend(auth);
-    proxy_socket.write_all(&packet)?;
+    proxy_socket.write_all(&packet).await?;
     Ok(main_method)
   }
   // 身份认证
@@ -473,7 +483,7 @@ impl Socket5Proxy {
   /// | --- | --- | --- | --- | --- |
   /// | VER | 协议版本号 | unsigned char | 1 | 0x05 |
   /// | STATUS | 验证结果 | unsigned char | 1 | 0x00 成功 |
-  fn use_password_auth(
+  async fn use_password_auth(
     &self,
     proxy_socket: &mut Socket,
     method: AuthenticationMethod,
@@ -487,9 +497,9 @@ impl Socket5Proxy {
       packet.push(pass_bytes.len() as u8);
       packet.extend(pass_bytes);
 
-      proxy_socket.write_all(&packet)?;
+      proxy_socket.write_all(&packet).await?;
       let mut buf = [0u8, 2];
-      proxy_socket.read_exact(&mut buf)?;
+      proxy_socket.read_exact(&mut buf).await?;
       let [_version, is_success] = buf;
       if is_success != consts::SOCKS5_REPLY_SUCCEEDED {
         return Err(Error::Other(format!(
@@ -516,13 +526,13 @@ impl Socket5Proxy {
   /// - 0x03 至 0x7F 由 IANA 分配（ IANA ASSIGNED ）
   /// - 0x80 至 0xFE 为私人方法保留（ RESERVED FOR PRIVATE METHODS ）
   /// - **0xFF 无可接受的方法（ NO ACCEPTABLE METHODS ）**
-  fn which_method_accepted(
+  async fn which_method_accepted(
     &self,
     proxy_socket: &mut Socket,
     auth_method: &AuthenticationMethod,
   ) -> Result<AuthenticationMethod> {
     let mut buf = [0u8; 2];
-    proxy_socket.read_exact(&mut buf)?;
+    proxy_socket.read_exact(&mut buf).await?;
     let [version, method] = buf;
     if version != consts::SOCKS5_VERSION {
       return Err(new_io_error(
@@ -534,10 +544,12 @@ impl Socket5Proxy {
       consts::SOCKS5_AUTH_METHOD_NONE => Ok(AuthenticationMethod::None),
       consts::SOCKS5_AUTH_METHOD_PASSWORD => Ok(auth_method.clone()),
       _ => {
-        proxy_socket.write_all(&[
-          consts::SOCKS5_VERSION,
-          consts::SOCKS5_AUTH_METHOD_NOT_ACCEPTABLE,
-        ])?;
+        proxy_socket
+          .write_all(&[
+            consts::SOCKS5_VERSION,
+            consts::SOCKS5_AUTH_METHOD_NOT_ACCEPTABLE,
+          ])
+          .await?;
         Err(Error::Other("no acceptable auth methods".to_string()))
       }
     }
@@ -552,7 +564,7 @@ impl Socket5Proxy {
   /// | ATYP | 目标地址类型 | unsigned char | 1 | 0x01 IPv40x03 域名0x04 IPv6 |
   /// | DST.ADDR | 目标地址 | unsigned char [] | 可变长度4 (IPv4)16 (IPv6)域名另见下表 |  |
   /// | DST.PORT | 目标端口 | unsigned short | 2 |  |
-  fn request_header(
+  async fn request_header(
     &self,
     proxy_socket: &mut Socket,
     target: &http::Uri,
@@ -560,8 +572,8 @@ impl Socket5Proxy {
   ) -> Result<TargetAddr> {
     let target = TargetAddr::from_uri(target, self.remote_dns)?;
     let (padding, packet) = target.to_be_bytes(cmd)?;
-    proxy_socket.write_all(&packet[..padding])?;
-    proxy_socket.flush()?;
+    proxy_socket.write_all(&packet[..padding]).await?;
+    proxy_socket.flush().await?;
     Ok(target)
   }
   /// 服务器收到代理请求后会响应如下消息：
@@ -575,9 +587,9 @@ impl Socket5Proxy {
   /// | BND.ADDR | 绑定地址 | unsigned char [] | 可变长度4 (IPv4)16 (IPv6) |  |
   /// | BND.PORT | 绑定端口 | unsigned short | 2 |  |
   ///
-  fn read_request_reply(&self, proxy_socket: &mut Socket) -> Result<TargetAddr> {
+  async fn read_request_reply(&self, proxy_socket: &mut Socket) -> Result<TargetAddr> {
     let mut buf = [0u8; 4];
-    proxy_socket.read_exact(&mut buf)?;
+    proxy_socket.read_exact(&mut buf).await?;
     let [version, reply, _rsv, address_type] = buf;
     if version != consts::SOCKS5_VERSION {
       return Err(Error::Other(format!("version {:?}", version)));
@@ -585,15 +597,15 @@ impl Socket5Proxy {
     if reply != consts::SOCKS5_REPLY_SUCCEEDED {
       return Err(Error::ReplyError(ReplyError::from(reply))); // Convert reply received into correct error
     }
-    let address = read_address(proxy_socket, address_type)?;
+    let address = read_address(proxy_socket, address_type).await?;
     Ok(address)
   }
 }
 
-fn read_port(proxy_socket: &mut Socket) -> Result<u16> {
+async fn read_port(proxy_socket: &mut Socket) -> Result<u16> {
   // Find port number
   let mut port = [0u8; 2];
-  proxy_socket.read_exact(&mut port)?;
+  proxy_socket.read_exact(&mut port).await?;
   // Convert (u8 * 2) into u16
   let port = (port[0] as u16) << 8 | port[1] as u16;
   Ok(port)
@@ -605,35 +617,35 @@ fn read_port(proxy_socket: &mut Socket) -> Result<u16> {
 /// | --- | --- | --- | --- |
 /// | DLEN | 域名长度 | unsigned char | 1 |
 /// | DOMAIN | 域名 | unsigned char [] | 可变长度1-255 |
-fn read_address(proxy_socket: &mut Socket, addr_type: u8) -> Result<TargetAddr> {
+async fn read_address(proxy_socket: &mut Socket, addr_type: u8) -> Result<TargetAddr> {
   let addr = match addr_type {
     consts::SOCKS5_ADDR_TYPE_IPV4 => {
       let mut buf = [0u8; 4];
-      proxy_socket.read_exact(&mut buf)?;
+      proxy_socket.read_exact(&mut buf).await?;
       let [a, b, c, d] = buf;
       TargetAddr::IP(SocketAddr::V4(SocketAddrV4::new(
         Ipv4Addr::new(a, b, c, d),
-        read_port(proxy_socket)?,
+        read_port(proxy_socket).await?,
       )))
     }
     consts::SOCKS5_ADDR_TYPE_IPV6 => {
       let mut buf = [0u8; 16];
-      proxy_socket.read_exact(&mut buf)?;
+      proxy_socket.read_exact(&mut buf).await?;
       TargetAddr::IP(SocketAddr::V6(SocketAddrV6::new(
         Ipv6Addr::from(buf),
-        read_port(proxy_socket)?,
+        read_port(proxy_socket).await?,
         0,
         0,
       )))
     }
     consts::SOCKS5_ADDR_TYPE_DOMAIN_NAME => {
       let mut len = [0u8];
-      proxy_socket.read_exact(&mut len)?;
+      proxy_socket.read_exact(&mut len).await?;
       let mut domain = vec![0u8; len[0] as usize];
-      proxy_socket.read_exact(&mut domain)?;
+      proxy_socket.read_exact(&mut domain).await?;
       TargetAddr::Domain(
         String::from_utf8_lossy(&domain).to_string(),
-        read_port(proxy_socket)?,
+        read_port(proxy_socket).await?,
       )
     }
     _ => return Err(Error::Other("IncorrectAddressType".to_string())),

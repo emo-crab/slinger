@@ -32,9 +32,9 @@
 //!
 //! For a single request, you can use the [`get`] shortcut method.
 //!
-//! ```rust
-//! fn main() -> Result<(), Box<dyn std::error::Error>> {
-//!   let body = slinger::get("https://httpbin.org/get")?
+//!```rust
+//! async fn run() -> Result<(), Box<dyn std::error::Error>> {
+//!   let body = slinger::get("https://httpbin.org/get").await?
 //!     .text()?;
 //!   println!("body = {body:?}");
 //!   Ok(())
@@ -53,14 +53,14 @@
 //! including `String` and `Vec<u8>`. If you wish to pass a custom
 //! type, you can use the `slinger::Body` constructors.
 //!
-//! ```rust
+//!```rust
 //! # use slinger::Error;
 //! #
-//! # fn run() -> Result<(), Error> {
+//! # async fn run() -> Result<(), Error> {
 //! let client = slinger::Client::new();
 //! let res = client.post("http://httpbin.org/post")
 //!     .body("the exact body that is sent")
-//!     .send()?;
+//!     .send().await?;
 //! # Ok(())
 //! # }
 //! ```
@@ -78,11 +78,11 @@
 //!
 //! ## Proxies
 //!```rust
-//! fn run() -> std::result::Result<(), Box<dyn std::error::Error>> {
+//! async fn run() -> std::result::Result<(), Box<dyn std::error::Error>> {
 //!   let proxy = slinger::Proxy::parse("http://user:pass@127.0.0.1:1080").unwrap();
 //!   // let proxy = slinger::Proxy::parse("socks5://user:pass@127.0.0.1:1080").unwrap();
 //!   let client = slinger::ClientBuilder::new().proxy(proxy).build().unwrap();
-//!   let resp = client.get("https://httpbin.org/get").send()?;
+//!   let resp = client.get("https://httpbin.org/get").send().await?;
 //!   println!("{:?}", resp);
 //!   Ok(())
 //! }
@@ -93,9 +93,9 @@
 //! HTTPS destinations.
 //!
 //! - Additional server certificates can be configured on a `ClientBuilder`
-//!   with the [`native_tls::Certificate`] type.
+//!   with the [`tls::Certificate`][Certificate] type.
 //! - Client certificates can be added to a `ClientBuilder` with the
-//!   [`native_tls::Identity`] type.
+//!   [`tls::Identity`][tls::Identity] type.
 //! - Various parts of TLS can also be configured or even disabled on the
 //!   `ClientBuilder`.
 //!
@@ -124,6 +124,10 @@ pub mod redirect;
 mod request;
 mod response;
 mod socket;
+#[cfg(feature = "tls")]
+pub mod tls;
+#[cfg(feature = "tls")]
+pub use tls::Certificate;
 
 pub use body::Body;
 use bytes::Bytes;
@@ -133,14 +137,16 @@ pub use errors::{Error, Result};
 pub use http;
 #[cfg(feature = "serde")]
 pub use http_serde;
-#[cfg(feature = "tls")]
-pub use native_tls;
-#[cfg(feature = "tls")]
-pub use openssl;
+// #[cfg(feature = "tls")]
+// pub use native_tls;
+// #[cfg(feature = "tls")]
+// pub use openssl;
 pub use proxy::Proxy;
 pub use request::{RawRequest, Request, RequestBuilder};
 pub use response::{Response, ResponseBuilder, ResponseConfig};
 pub use socket::Socket;
+#[cfg(feature = "tls")]
+pub use tokio_rustls;
 
 /// Shortcut method to quickly make a `GET` request.
 ///
@@ -154,19 +160,19 @@ pub use socket::Socket;
 /// # Examples
 ///
 /// ```rust
-/// # fn run() -> Result<(), slinger::Error> {
-/// let body = slinger::get("https://www.rust-lang.org")?
+/// # async fn run() -> Result<(), slinger::Error> {
+/// let body = slinger::get("https://www.rust-lang.org").await?
 ///     .text()?;
 /// # Ok(())
 /// # }
 /// ```
 ///
-pub fn get<U>(url: U) -> errors::Result<Response>
+pub async fn get<U>(url: U) -> errors::Result<Response>
 where
   http::Uri: TryFrom<U>,
   <http::Uri as TryFrom<U>>::Error: Into<http::Error>,
 {
-  Client::builder().build()?.get(url).send()
+  Client::builder().build()?.get(url).send().await
 }
 
 /// Shortcut method to quickly make a `RAW` request.
@@ -181,20 +187,24 @@ where
 /// # Examples
 ///
 /// ```rust
-/// # fn run() -> Result<(), slinger::Error> {
-/// let body = slinger::raw("http://httpbin.org","GET /robots HTTP/1.1\r\n\r\n",true)?
+/// # async fn run() -> Result<(), slinger::Error> {
+/// let body = slinger::raw("http://httpbin.org","GET /robots HTTP/1.1\r\n\r\n",true).await?
 ///     .text()?;
 /// # Ok(())
 /// # }
 /// ```
 ///
-pub fn raw<U, R>(uri: U, raw: R, unsafe_raw: bool) -> errors::Result<Response>
+pub async fn raw<U, R>(uri: U, raw: R, unsafe_raw: bool) -> errors::Result<Response>
 where
   Bytes: From<R>,
   http::Uri: TryFrom<U>,
   <http::Uri as TryFrom<U>>::Error: Into<http::Error>,
 {
-  Client::builder().build()?.raw(uri, raw, unsafe_raw).send()
+  Client::builder()
+    .build()?
+    .raw(uri, raw, unsafe_raw)
+    .send()
+    .await
 }
 
 pub(crate) const CR_LF: &[u8] = &[13, 10];

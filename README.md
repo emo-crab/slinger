@@ -75,14 +75,15 @@ This example enables some optional features, so your `Cargo.toml` could look lik
 
 ```toml
 [dependencies]
-slinger = { version = "0.1.2", features = ["serde", "cookie", "charset", "tls", "gzip"] }
+slinger = { version = "0.2.0", features = ["serde", "cookie", "charset", "tls", "gzip"] }
 ```
 
 And then the code:
 
 ```rust,no_run
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-  let resp = slinger::get("https://httpbin.org/get")?;
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+  let resp = slinger::get("https://httpbin.org/get").await?;
   println!("{:?}", resp.text());
   Ok(())
 }
@@ -112,8 +113,8 @@ Host: 192.168.83.196:8081
 X: GET http://192.168.83.1:8080/admin.jsp HTTP/1.0
 
 ";
-
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
   // let proxy = slinger::Proxy::parse("http://127.0.0.1:8080").unwrap();
   let client = ClientBuilder::new().build().unwrap();
   let mut raw = Vec::new();
@@ -129,7 +130,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
       }
     }
   }
-  let resp = client.raw("http://127.0.0.1:9015/", raw, true).send()?;
+  let resp = client.raw("http://127.0.0.1:9015/", raw, true).send().await?;
   let record = resp.extensions().get::<Vec<HTTPRecord>>().unwrap();
   println!("{:?}", record);
   Ok(())

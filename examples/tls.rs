@@ -1,4 +1,7 @@
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+use slinger::tls;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
   #[cfg(feature = "tls")]
   {
     use slinger::ClientBuilder;
@@ -24,19 +27,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ];
 
     let client = ClientBuilder::new()
-      .min_tls_version(Some(native_tls::Protocol::Tlsv10))
+      .min_tls_version(Some(tls::Version::TLS_1_0))
       .build()
       .unwrap();
     for url in urls {
       println!("{}", url);
-      let resp = client.get(url).send()?;
+      let resp = client.get(url).send().await?;
       println!("{}", resp.text().unwrap_or_default());
       let certificate = resp.certificate().unwrap();
       println!("{:?}", certificate);
     }
     for url in key_urls {
       println!("{}", url);
-      let resp = client.get(url).send();
+      let resp = client.get(url).send().await;
       match resp {
         Ok(resp) => {
           println!("{}", resp.text().unwrap_or_default());

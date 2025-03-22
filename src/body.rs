@@ -1,7 +1,7 @@
-use std::fmt;
-use std::ops::{Deref, DerefMut};
-
 use bytes::Bytes;
+use std::fmt;
+use std::fmt::Write;
+use std::ops::{Deref, DerefMut};
 
 /// A body.
 #[derive(Clone, PartialEq)]
@@ -98,7 +98,17 @@ impl fmt::Debug for Body {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     match String::from_utf8(self.inner.to_vec()) {
       Ok(s) => fmt::Display::fmt(&s, f),
-      Err(_err) => fmt::Display::fmt(&self.inner.escape_ascii(), f),
+      Err(_err) => fmt::Display::fmt(
+        &self
+          .inner
+          .as_ref()
+          .iter()
+          .fold(String::new(), |mut output, b| {
+            let _ = write!(output, "\\x{b:02x}");
+            output
+          }),
+        f,
+      ),
     }
   }
 }
@@ -107,7 +117,17 @@ impl fmt::Display for Body {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     match String::from_utf8(self.inner.to_vec()) {
       Ok(s) => fmt::Display::fmt(&s, f),
-      Err(_err) => fmt::Display::fmt(&self.inner.escape_ascii(), f),
+      Err(_err) => fmt::Display::fmt(
+        &self
+          .inner
+          .as_ref()
+          .iter()
+          .fold(String::new(), |mut output, b| {
+            let _ = write!(output, "\\x{b:02x}");
+            output
+          }),
+        f,
+      ),
     }
   }
 }

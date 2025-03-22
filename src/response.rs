@@ -1,7 +1,15 @@
 use std::fmt::Debug;
-use std::io::{BufRead, BufReader, Read};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, BufReader};
 
+use crate::body::Body;
+#[cfg(feature = "cookie")]
+use crate::cookies;
+use crate::errors::{new_io_error, Error, Result};
+use crate::record::{HTTPRecord, LocalPeerRecord, RedirectRecord};
+#[cfg(feature = "tls")]
+use crate::tls::PeerCertificate;
+use crate::{Request, COLON_SPACE, CR_LF, SPACE};
 use bytes::Bytes;
 #[cfg(feature = "charset")]
 use encoding_rs::{Encoding, UTF_8};
@@ -10,13 +18,8 @@ use flate2::read::MultiGzDecoder;
 use http::{Method, Response as HttpResponse};
 #[cfg(feature = "charset")]
 use mime::Mime;
-
-use crate::body::Body;
-#[cfg(feature = "cookie")]
-use crate::cookies;
-use crate::errors::{new_io_error, Error, Result};
-use crate::record::{HTTPRecord, LocalPeerRecord, RedirectRecord};
-use crate::{Request, COLON_SPACE, CR_LF, SPACE};
+#[cfg(feature = "gzip")]
+use std::io::Read;
 
 /// A Response to a submitted `Request`.
 #[derive(Debug, Default, Clone)]
@@ -151,8 +154,8 @@ impl Response {
   ///
   /// ```rust
   /// # extern crate slinger;
-  /// # fn run() -> Result<(), Box<dyn std::error::Error>> {
-  /// let content = slinger::get("http://httpbin.org/range/26")?.text()?;
+  /// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
+  /// let content = slinger::get("http://httpbin.org/range/26").await?.text()?;
   /// # Ok(())
   /// # }
   /// ```
@@ -192,12 +195,12 @@ impl Response {
   /// ```rust
   /// use slinger::Client;
   /// use slinger::http::StatusCode;
-  /// # fn run() -> Result<(), Box<dyn std::error::Error>> {
+  /// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
   /// let client = Client::new();
   ///
   /// let resp = client.post("http://httpbin.org/post")
   ///     .body("possibly too large")
-  ///     .send()?;
+  ///     .send().await?;
   ///
   /// match resp.status_code() {
   ///     StatusCode::OK => println!("success!"),
@@ -229,10 +232,10 @@ impl Response {
   /// use slinger::Client;
   /// use slinger::http::header::ETAG;
   ///
-  /// # fn run() -> Result<(), Box<dyn std::error::Error>> {
+  /// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
   /// let client = Client::new();
   ///
-  /// let mut resp = client.get("http://httpbin.org/cache").send()?;
+  /// let mut resp = client.get("http://httpbin.org/cache").send().await?;
   /// if resp.status_code().is_success() {
   ///     if let Some(etag) = resp.headers().get(ETAG) {
   ///         std::fs::write("etag", etag.as_bytes());
@@ -268,8 +271,8 @@ impl Response {
   /// # Example
   ///
   /// ```rust
-  /// # fn run() -> Result<(), Box<dyn std::error::Error>> {
-  /// let resp = slinger::get("http://httpbin.org/redirect/1")?;
+  /// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
+  /// let resp = slinger::get("http://httpbin.org/redirect/1").await?;
   /// assert_eq!(resp.uri().to_string().as_str(), "http://httpbin.org/get");
   /// # Ok(())
   /// # }
@@ -287,8 +290,8 @@ impl Response {
   /// # Example
   ///
   /// ```
-  /// # fn run() -> Result<(), Box<dyn std::error::Error>> {
-  /// let resp = slinger::get("http://httpbin.org/ip")?;
+  /// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
+  /// let resp = slinger::get("http://httpbin.org/ip").await?;
   /// let body = resp.body();
   /// println!("bytes: {body:?}");
   /// # Ok(())
@@ -318,8 +321,8 @@ impl Response {
   /// # Example
   ///
   /// ```rust
-  /// # fn run() -> Result<(), Box<dyn std::error::Error>> {
-  /// let resp = slinger::get("http://httpbin.org/redirect/1")?;
+  /// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
+  /// let resp = slinger::get("http://httpbin.org/redirect/1").await?;
   /// println!("httpbin.org address: {:?}", resp.local_peer_record());
   /// # Ok(())
   /// # }
@@ -332,24 +335,24 @@ impl Response {
   /// # Example
   ///
   /// ```rust
-  /// # fn run() -> Result<(), Box<dyn std::error::Error>> {
-  /// let resp = slinger::get("https://httpbin.org/")?;
+  /// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
+  /// let resp = slinger::get("https://httpbin.org/").await?;
   /// println!("httpbin.org certificate: {:?}", resp.certificate());
   /// # Ok(())
   /// # }
   /// ```
 
   #[cfg(feature = "tls")]
-  pub fn certificate(&self) -> Option<&openssl::x509::X509> {
-    self.extensions().get::<openssl::x509::X509>()
+  pub fn certificate(&self) -> Option<&PeerCertificate> {
+    self.extensions().get::<PeerCertificate>()
   }
   /// Get the http record used to get this `Response`.
   ///
   /// # Example
   ///
   /// ```rust
-  /// # fn run() -> Result<(), Box<dyn std::error::Error>> {
-  /// let resp = slinger::get("http://httpbin.org/redirect/1")?;
+  /// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
+  /// let resp = slinger::get("http://httpbin.org/redirect/1").await?;
   /// println!("httpbin.org http: {:?}", resp.http_record());
   /// # Ok(())
   /// # }
@@ -362,8 +365,8 @@ impl Response {
   /// # Example
   ///
   /// ```rust
-  /// # fn run() -> Result<(), Box<dyn std::error::Error>> {
-  /// let resp = slinger::get("http://httpbin.org/redirect/1")?;
+  /// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
+  /// let resp = slinger::get("http://httpbin.org/redirect/1").await?;
   /// println!("httpbin.org request: {:?}", resp.request());
   /// # Ok(())
   /// # }
@@ -376,8 +379,8 @@ impl Response {
   /// # Example
   ///
   /// ```rust
-  /// # fn run() -> Result<(), Box<dyn std::error::Error>> {
-  /// let resp = slinger::get("http://httpbin.org/redirect-to?url=http://www.example.com/")?;
+  /// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
+  /// let resp = slinger::get("http://httpbin.org/redirect-to?url=http://www.example.com/").await?;
   /// println!("httpbin.org redirect: {:?}", resp.redirect_record());
   /// # Ok(())
   /// # }
@@ -391,7 +394,7 @@ impl Response {
 ///
 /// To construct a `ResponseBuilder`, refer to the `Client` documentation.
 #[derive(Debug)]
-pub struct ResponseBuilder<T: Read> {
+pub struct ResponseBuilder<T: AsyncRead + AsyncReadExt> {
   builder: http::response::Builder,
   reader: BufReader<T>,
   config: ResponseConfig,
@@ -420,7 +423,7 @@ impl ResponseConfig {
   }
 }
 
-impl<T: Read> ResponseBuilder<T> {
+impl<T: AsyncRead + Unpin + Sized> ResponseBuilder<T> {
   /// Constructs a new response.
   pub fn new(reader: BufReader<T>, config: ResponseConfig) -> ResponseBuilder<T> {
     ResponseBuilder {
@@ -429,10 +432,10 @@ impl<T: Read> ResponseBuilder<T> {
       config,
     }
   }
-  fn parser_version(&mut self) -> Result<(http::Version, http::StatusCode)> {
+  async fn parser_version(&mut self) -> Result<(http::Version, http::StatusCode)> {
     let (mut vf, mut sf) = (false, false);
     let mut lines = Vec::new();
-    if let Ok(_length) = self.reader.read_until(b'\n', &mut lines) {
+    if let Ok(_length) = self.reader.read_until(b'\n', &mut lines).await {
       let mut version = http::Version::default();
       let mut sc = http::StatusCode::default();
       for (index, vc) in lines.splitn(3, |b| b == &b' ').enumerate() {
@@ -480,11 +483,11 @@ impl<T: Read> ResponseBuilder<T> {
       ))
     }
   }
-  fn read_headers(&mut self) -> http::HeaderMap {
+  async fn read_headers(&mut self) -> http::HeaderMap {
     // 读取请求头
     let mut headers = http::HeaderMap::new();
     let mut header_line = Vec::new();
-    while let Ok(length) = self.reader.read_until(b'\n', &mut header_line) {
+    while let Ok(length) = self.reader.read_until(b'\n', &mut header_line).await {
       if length == 0 || header_line == b"\r\n" {
         break;
       }
@@ -499,7 +502,7 @@ impl<T: Read> ResponseBuilder<T> {
     }
     headers
   }
-  fn read_body(&mut self, header: &http::HeaderMap) -> Result<Vec<u8>> {
+  async fn read_body(&mut self, header: &http::HeaderMap) -> Result<Vec<u8>> {
     let mut body = Vec::new();
     if matches!(self.config.method, Method::HEAD) {
       return Ok(body);
@@ -516,7 +519,7 @@ impl<T: Read> ResponseBuilder<T> {
     }
     if let Some(te) = header.get(http::header::TRANSFER_ENCODING) {
       if te == "chunked" {
-        body = self.read_chunked_body()?;
+        body = self.read_chunked_body().await?;
       }
     } else {
       let limits = content_length.map(|x| {
@@ -528,28 +531,29 @@ impl<T: Read> ResponseBuilder<T> {
       });
       let mut buffer = vec![0; 12]; // 定义一个缓冲区
       let mut total_bytes_read = 0;
-      let mut start = Instant::now();
       let timeout = self.config.timeout;
       loop {
-        match self.reader.read(&mut buffer) {
+        let size = if let Some(to) = timeout {
+          match tokio::time::timeout(to, self.reader.read(&mut buffer)).await {
+            Ok(size) => size,
+            Err(_) => break,
+          }
+        } else {
+          self.reader.read(&mut buffer).await
+        };
+        match size {
           Ok(0) => break,
           Ok(n) => {
             body.extend_from_slice(&buffer[..n]);
             total_bytes_read += n;
             // 当有读取到数据的时候重置计时器
-            start = Instant::now();
           }
           Err(ref err) if err.kind() == std::io::ErrorKind::WouldBlock => {
             // 如果没有数据可读，但超时尚未到达，可以在这里等待或重试
             // 当已经有数据了或者触发超时就跳出循环，防止防火墙一直把会话挂着不释放
             if total_bytes_read > 0 {
               break;
-            } else if let Some(to) = timeout {
-              if start.elapsed() > to {
-                break;
-              }
             }
-            std::thread::sleep(Duration::from_micros(100));
           }
           Err(_err) => break,
         }
@@ -573,13 +577,13 @@ impl<T: Read> ResponseBuilder<T> {
     Ok(body)
   }
 
-  fn read_chunked_body(&mut self) -> Result<Vec<u8>> {
+  async fn read_chunked_body(&mut self) -> Result<Vec<u8>> {
     let mut body: Vec<u8> = Vec::new();
     loop {
       let mut chunk: String = String::new();
       loop {
         let mut one_byte = vec![0; 1];
-        self.reader.read_exact(&mut one_byte)?;
+        self.reader.read_exact(&mut one_byte).await?;
         if one_byte[0] != 10 && one_byte[0] != 13 {
           chunk.push(one_byte[0] as char);
           break;
@@ -587,9 +591,9 @@ impl<T: Read> ResponseBuilder<T> {
       }
       loop {
         let mut one_byte = vec![0; 1];
-        self.reader.read_exact(&mut one_byte)?;
+        self.reader.read_exact(&mut one_byte).await?;
         if one_byte[0] == 10 || one_byte[0] == 13 {
-          self.reader.read_exact(&mut one_byte)?;
+          self.reader.read_exact(&mut one_byte).await?;
           break;
         } else {
           chunk.push(one_byte[0] as char)
@@ -600,7 +604,7 @@ impl<T: Read> ResponseBuilder<T> {
       }
       let chunk = usize::from_str_radix(&chunk, 16)?;
       let mut chunk_of_bytes = vec![0; chunk];
-      self.reader.read_exact(&mut chunk_of_bytes)?;
+      self.reader.read_exact(&mut chunk_of_bytes).await?;
       body.append(&mut chunk_of_bytes);
     }
     Ok(body)
@@ -608,12 +612,12 @@ impl<T: Read> ResponseBuilder<T> {
 
   /// Build a `Response`, which can be inspected, modified and executed with
   /// `Client::execute()`.
-  pub fn build(mut self) -> Result<Response> {
-    let (v, c) = self.parser_version()?;
+  pub async fn build(mut self) -> Result<Response> {
+    let (v, c) = self.parser_version().await?;
     self.builder = self.builder.version(v).status(c);
-    let header = self.read_headers();
+    let header = self.read_headers().await;
     // 读取body
-    let body = self.read_body(&header)?;
+    let body = self.read_body(&header).await?;
     if let Some(h) = self.builder.headers_mut() {
       *h = header;
     }
