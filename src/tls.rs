@@ -180,7 +180,7 @@ impl Identity {
   ///
   /// # Optional
   ///
-  /// This requires the `rustls-tls(-...)` Cargo feature enabled.
+  /// This requires the `tls(-...)` Cargo feature enabled.
 
   pub fn from_pem(buf: &[u8]) -> crate::Result<Identity> {
     use rustls_pemfile::Item;
