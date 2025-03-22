@@ -41,7 +41,7 @@ use http::{HeaderMap, HeaderValue, Method, StatusCode};
 /// ```
 #[derive(Clone)]
 pub struct Client {
-  inner: ClientRef,
+  inner: Arc<ClientRef>,
 }
 
 impl Default for Client {
@@ -538,7 +538,7 @@ impl ClientBuilder {
     }
     let connector = connector_builder.build()?;
     Ok(Client {
-      inner: ClientRef {
+      inner: Arc::new(ClientRef {
         keepalive: config.keepalive,
         timeout: config.timeout,
         #[cfg(feature = "cookie")]
@@ -547,7 +547,7 @@ impl ClientBuilder {
         redirect_policy: config.redirect_policy,
         referer: config.referer,
         header: config.headers,
-      },
+      }),
     })
   }
   // Higher-level options
@@ -796,7 +796,7 @@ impl ClientBuilder {
   /// This requires the optional `cookies` feature to be enabled.
   #[cfg(feature = "cookie")]
   #[cfg_attr(docsrs, doc(cfg(feature = "cookie")))]
-  pub fn cookie_provider<C: cookies::CookieStore + 'static>(
+  pub fn cookie_provider<C: cookies::CookieStore + Send + Sync + 'static>(
     mut self,
     cookie_store: Arc<C>,
   ) -> ClientBuilder {
@@ -856,7 +856,7 @@ struct Config {
   max_tls_version: Option<tls::Version>,
   redirect_policy: Policy,
   #[cfg(feature = "cookie")]
-  cookie_store: Option<Arc<dyn cookies::CookieStore>>,
+  cookie_store: Option<Arc<dyn cookies::CookieStore + Send + Sync + 'static>>,
 }
 
 impl Debug for Config {
@@ -910,7 +910,7 @@ struct ClientRef {
   keepalive: bool,
   timeout: Option<Duration>,
   #[cfg(feature = "cookie")]
-  cookie_store: Option<Arc<dyn cookies::CookieStore>>,
+  cookie_store: Option<Arc<dyn cookies::CookieStore + Send + Sync + 'static>>,
   connector: Arc<Connector>,
   redirect_policy: Policy,
   referer: bool,
