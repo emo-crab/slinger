@@ -105,10 +105,7 @@ impl Certificate {
       .collect::<crate::Result<Vec<Certificate>>>()
   }
 
-  pub(crate) fn add_to_rustls(
-    self,
-    root_cert_store: &mut rustls::RootCertStore,
-  ) -> crate::Result<()> {
+  pub(crate) fn add_to_tls(self, root_cert_store: &mut RootCertStore) -> crate::Result<()> {
     use std::io::Cursor;
 
     match self.original {
@@ -138,7 +135,6 @@ impl Certificate {
   }
 }
 /// Represents a private key and X509 cert as a client certificate.
-
 #[derive(Clone)]
 pub struct Identity {
   inner: ClientCert,
@@ -228,7 +224,7 @@ impl Identity {
     })
   }
 
-  pub(crate) fn add_to_rustls(
+  pub(crate) fn add_to_tls(
     self,
     config_builder: rustls::ConfigBuilder<
       rustls::ClientConfig,
@@ -264,7 +260,7 @@ impl Version {
   pub const TLS_1_2: Version = Version(InnerVersion::Tls1_2);
   /// Version 1.3 of the TLS protocol.
   pub const TLS_1_3: Version = Version(InnerVersion::Tls1_3);
-  pub(crate) fn from_rustls(version: rustls::ProtocolVersion) -> Option<Self> {
+  pub(crate) fn from_tls(version: rustls::ProtocolVersion) -> Option<Self> {
     match version {
       rustls::ProtocolVersion::SSLv2 => None,
       rustls::ProtocolVersion::SSLv3 => None,

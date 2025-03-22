@@ -1,6 +1,6 @@
-use crate::errors::{new_io_error, Result};
+use crate::errors::Result;
 use crate::proxy::{Proxy, ProxySocket};
-use crate::socket::Socket;
+use crate::socket::{MaybeTlsStream, Socket};
 #[cfg(feature = "tls")]
 use crate::tls::{Identity, IgnoreHostname, NoVerifier};
 #[cfg(feature = "tls")]
@@ -30,6 +30,7 @@ pub struct ConnectorBuilder {
   #[cfg(feature = "tls")]
   max_tls_version: Option<tls::Version>,
   nodelay: bool,
+  keepalive: bool,
   #[cfg(feature = "tls")]
   tls_sni: bool,
   #[cfg(feature = "tls")]
@@ -52,6 +53,7 @@ impl Default for ConnectorBuilder {
       #[cfg(feature = "tls")]
       max_tls_version: None,
       nodelay: false,
+      keepalive: false,
       #[cfg(feature = "tls")]
       tls_sni: true,
       #[cfg(feature = "tls")]
@@ -95,6 +97,13 @@ impl ConnectorBuilder {
   /// Default is `false`.
   pub fn nodelay(mut self, value: bool) -> ConnectorBuilder {
     self.nodelay = value;
+    self
+  }
+  /// Sets value for the `SO_KEEPALIVE` option on this socket.
+  ///
+  /// Default is `false`.
+  pub fn keepalive(mut self, value: bool) -> ConnectorBuilder {
+    self.keepalive = value;
     self
   }
   /// Controls the use of Server Name Indication (SNI).
@@ -197,13 +206,13 @@ impl ConnectorBuilder {
     let tls = {
       let mut root_cert_store = rustls::RootCertStore::empty();
       for cert in self.certificate.clone() {
-        cert.add_to_rustls(&mut root_cert_store)?;
+        cert.add_to_tls(&mut root_cert_store)?;
       }
       let mut versions = rustls::ALL_VERSIONS.to_vec();
 
       if let Some(min_tls_version) = self.min_tls_version {
         versions.retain(|&supported_version| {
-          match tls::Version::from_rustls(supported_version.version) {
+          match tls::Version::from_tls(supported_version.version) {
             Some(version) => version >= min_tls_version,
             // Assume it's so new we don't know about it, allow it
             // (as of writing this is unreachable)
@@ -214,7 +223,7 @@ impl ConnectorBuilder {
 
       if let Some(max_tls_version) = self.max_tls_version {
         versions.retain(|&supported_version| {
-          match tls::Version::from_rustls(supported_version.version) {
+          match tls::Version::from_tls(supported_version.version) {
             Some(version) => version <= max_tls_version,
             None => false,
           }
@@ -224,7 +233,8 @@ impl ConnectorBuilder {
       if versions.is_empty() {
         return Err(crate::errors::builder("empty supported tls versions"));
       }
-      let provider = rustls::crypto::CryptoProvider::get_default().cloned()
+      let provider = rustls::crypto::CryptoProvider::get_default()
+        .cloned()
         .unwrap_or_else(|| std::sync::Arc::new(rustls::crypto::ring::default_provider()));
       let signature_algorithms = provider.signature_verification_algorithms;
       let config_builder = rustls::ClientConfig::builder_with_provider(provider.clone())
@@ -245,16 +255,17 @@ impl ConnectorBuilder {
         config_builder.with_root_certificates(root_cert_store)
       };
       let tls = if let Some(id) = self.identity.clone() {
-        id.add_to_rustls(config_builder)?
+        id.add_to_tls(config_builder)?
       } else {
         config_builder.with_no_client_auth()
       };
-      
+
       TlsConnector::from(std::sync::Arc::new(tls))
     };
     let conn = Connector {
       connect_timeout: self.connect_timeout,
       nodelay: self.nodelay,
+      keepalive: self.keepalive,
       read_timeout: self.read_timeout,
       write_timeout: self.write_timeout,
       proxy: self.proxy.clone(),
@@ -270,6 +281,7 @@ impl ConnectorBuilder {
 pub struct Connector {
   connect_timeout: Option<Duration>,
   nodelay: bool,
+  keepalive: bool,
   read_timeout: Option<Duration>,
   write_timeout: Option<Duration>,
   proxy: Option<Proxy>,
@@ -289,19 +301,27 @@ impl Connector {
     let addr = addr.into();
     let raw_socket = RawSocket::new(Domain::for_address(addr), Type::STREAM, Some(Protocol::TCP))?;
     raw_socket.set_nonblocking(true)?;
-    raw_socket.set_write_timeout(self.write_timeout)?;
-    raw_socket.set_read_timeout(self.read_timeout)?;
+    // 阻塞才能设置超时，异步在这设置没意义
+    // raw_socket.set_write_timeout(self.write_timeout)?;
+    // raw_socket.set_read_timeout(self.read_timeout)?;
     let socket = TcpSocket::from_std_stream(raw_socket.into());
     if self.nodelay {
       socket.set_nodelay(self.nodelay)?;
+    }
+    if self.keepalive {
+      socket.set_keepalive(self.keepalive)?;
     }
     let s = match self.connect_timeout {
       None => socket.connect(addr).await?,
       Some(timeout) => tokio::time::timeout(timeout, socket.connect(addr))
         .await
-        .map_err(|x| new_io_error(std::io::ErrorKind::TimedOut, &format!("timeout: {}", x)))??,
+        .map_err(|x| crate::errors::new_io_error(std::io::ErrorKind::TimedOut, &x.to_string()))??,
     };
-    Ok(Socket::TCP(s))
+    Ok(Socket::new(
+      MaybeTlsStream::Tcp(s),
+      self.read_timeout,
+      self.write_timeout,
+    ))
   }
   /// Connect to a remote endpoint with url
   pub async fn connect_with_uri(&self, target: &http::Uri) -> Result<Socket> {
@@ -313,21 +333,24 @@ impl Connector {
   /// A `Connector` will use transport layer security (TLS) by default to connect to destinations.
   pub async fn upgrade_to_tls(&self, stream: Socket, domain: &str) -> Result<Socket> {
     // 上面是原始socket
-    let i = match stream {
-      Socket::TCP(s) => {
+    let write_timeout: Option<Duration> = stream.write_timeout();
+    let read_timeout: Option<Duration> = stream.read_timeout();
+    let i = match stream.inner() {
+      MaybeTlsStream::Tcp(s) => {
         let domain = ServerName::try_from(domain.to_owned()).unwrap();
         let stream = self.tls.connect(domain, s).await?;
-        Socket::TLS(stream)
+        MaybeTlsStream::Tls(stream)
       }
       // 本来就是tls了
-      Socket::TLS(_t) => {
+      MaybeTlsStream::Tls(_t) => {
         return Err(crate::errors::new_io_error(
           std::io::ErrorKind::ConnectionAborted,
           "it's already tls",
         ));
       }
     };
-    Ok(i)
+
+    Ok(Socket::new(i, read_timeout, write_timeout))
   }
 }
 

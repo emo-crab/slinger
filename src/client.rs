@@ -812,6 +812,7 @@ impl ClientBuilder {
   /// This requires the optional `tls`
   /// feature to be enabled.
   #[cfg(feature = "tls")]
+  #[cfg_attr(docsrs, doc(cfg(feature = "tls")))]
   pub fn min_tls_version(mut self, version: Option<tls::Version>) -> ClientBuilder {
     self.config.min_tls_version = version;
     self
@@ -825,6 +826,7 @@ impl ClientBuilder {
   /// This requires the optional `tls`
   /// feature to be enabled.
   #[cfg(feature = "tls")]
+  #[cfg_attr(docsrs, doc(cfg(feature = "tls")))]
   pub fn max_tls_version(mut self, version: Option<tls::Version>) -> ClientBuilder {
     self.config.max_tls_version = version;
     self

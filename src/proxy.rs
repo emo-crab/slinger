@@ -10,7 +10,6 @@ use percent_encoding::percent_decode;
 use std::io::Write;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6, ToSocketAddrs};
 use std::str::FromStr;
-use tokio::io::BufReader;
 
 impl Proxy {
   fn http(uri: &http::Uri) -> Result<Self> {
@@ -271,7 +270,7 @@ impl HttpProxy {
   async fn read_resp(&self, proxy_socket: &mut Socket) -> Result<Response> {
     let mut buffer = [0; 128];
     proxy_socket.read(&mut buffer[..]).await?;
-    let reader = BufReader::new(buffer.as_slice());
+    let reader = tokio::io::BufReader::new(buffer.as_slice());
     let proxy_response = ResponseBuilder::new(reader, Default::default())
       .build()
       .await?;

@@ -49,6 +49,7 @@ rustls-pemfile = { version = "2", optional = true }
 rustls-pki-types = { version = "1.1.0", features = ["alloc"], optional = true }
 [dev-dependencies]
 tokio = { version = "1.0", default-features = false, features = ["macros", "rt-multi-thread"] }
+futures = { version = "0.3.31" }
 [features]
 default = []
 tls = ["tokio-rustls", "rustls-pemfile", "rustls-pki-types"]

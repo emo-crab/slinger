@@ -93,9 +93,9 @@
 //! HTTPS destinations.
 //!
 //! - Additional server certificates can be configured on a `ClientBuilder`
-//!   with the [`native_tls::Certificate`] type.
+//!   with the [`tls::Certificate`][Certificate] type.
 //! - Client certificates can be added to a `ClientBuilder` with the
-//!   [`native_tls::Identity`] type.
+//!   [`tls::Identity`][tls::Identity] type.
 //! - Various parts of TLS can also be configured or even disabled on the
 //!   `ClientBuilder`.
 //!

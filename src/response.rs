@@ -425,7 +425,7 @@ impl ResponseConfig {
 
 impl<T: AsyncRead + Unpin + Sized> ResponseBuilder<T> {
   /// Constructs a new response.
-  pub fn new(reader: tokio::io::BufReader<T>, config: ResponseConfig) -> ResponseBuilder<T> {
+  pub fn new(reader: BufReader<T>, config: ResponseConfig) -> ResponseBuilder<T> {
     ResponseBuilder {
       builder: Default::default(),
       reader,
