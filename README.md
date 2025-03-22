@@ -75,7 +75,7 @@ This example enables some optional features, so your `Cargo.toml` could look lik
 
 ```toml
 [dependencies]
-slinger = { version = "0.1.2", features = ["serde", "cookie", "charset", "tls", "gzip"] }
+slinger = { version = "0.2.0", features = ["serde", "cookie", "charset", "tls", "gzip"] }
 ```
 
 And then the code:
