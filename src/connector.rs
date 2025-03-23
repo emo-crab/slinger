@@ -333,24 +333,13 @@ impl Connector {
   /// A `Connector` will use transport layer security (TLS) by default to connect to destinations.
   pub async fn upgrade_to_tls(&self, stream: Socket, domain: &str) -> Result<Socket> {
     // 上面是原始socket
-    let write_timeout: Option<Duration> = stream.write_timeout();
-    let read_timeout: Option<Duration> = stream.read_timeout();
-    let i = match stream.inner() {
-      MaybeTlsStream::Tcp(s) => {
-        let domain = ServerName::try_from(domain.to_owned()).unwrap();
-        let stream = self.tls.connect(domain, s).await?;
-        MaybeTlsStream::Tls(stream)
-      }
-      // 本来就是tls了
-      MaybeTlsStream::Tls(_t) => {
-        return Err(crate::errors::new_io_error(
-          std::io::ErrorKind::ConnectionAborted,
-          "it's already tls",
-        ));
-      }
-    };
-
-    Ok(Socket::new(i, read_timeout, write_timeout))
+    let domain = ServerName::try_from(domain.to_owned())
+      .map_err(|e| crate::errors::Error::Other(e.to_string()))?;
+    let this = self.tls.clone();
+    let tls = stream
+      .tls(move |t| async move { this.connect(domain, t).await })
+      .await?;
+    Ok(tls)
   }
 }
 

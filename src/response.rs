@@ -238,7 +238,7 @@ impl Response {
   /// let mut resp = client.get("http://httpbin.org/cache").send().await?;
   /// if resp.status_code().is_success() {
   ///     if let Some(etag) = resp.headers().get(ETAG) {
-  ///         std::fs::write("etag", etag.as_bytes());
+  ///         std::fs::write("etag", etag.as_bytes())?;
   ///     }
   /// }
   /// # Ok(())

@@ -29,15 +29,24 @@ impl Socket {
       write_timeout,
     }
   }
-  pub(crate) fn read_timeout(&self) -> Option<Duration> {
-    self.read_timeout
-  }
-  pub(crate) fn write_timeout(&self) -> Option<Duration> {
-    self.write_timeout
-  }
   #[cfg(feature = "tls")]
-  pub(crate) fn inner(self) -> MaybeTlsStream {
-    self.inner
+  pub(crate) async fn tls<F, Fut>(self, func: F) -> Result<Self, Error>
+  where
+    F: FnOnce(TcpStream) -> Fut + 'static,
+    Fut: std::future::Future<Output = Result<TlsStream<TcpStream>, Error>>,
+  {
+    match self.inner {
+      MaybeTlsStream::Tcp(t) => Ok(Self {
+        inner: MaybeTlsStream::Tls(func(t).await?),
+        read_timeout: self.read_timeout,
+        write_timeout: self.write_timeout,
+      }),
+      MaybeTlsStream::Tls(t) => Ok(Self {
+        inner: MaybeTlsStream::Tls(t),
+        read_timeout: self.read_timeout,
+        write_timeout: self.write_timeout,
+      }),
+    }
   }
 }
 #[derive(Debug)]
@@ -108,7 +117,7 @@ impl AsyncWrite for MaybeTlsStream {
     self: Pin<&mut Self>,
     cx: &mut Context<'_>,
     buf: &[u8],
-  ) -> Poll<Result<usize, std::io::Error>> {
+  ) -> Poll<Result<usize, Error>> {
     match self.get_mut() {
       MaybeTlsStream::Tcp(stream) => Pin::new(stream).poll_write(cx, buf),
       #[cfg(feature = "tls")]
@@ -116,14 +125,14 @@ impl AsyncWrite for MaybeTlsStream {
     }
   }
 
-  fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), std::io::Error>> {
+  fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Error>> {
     match self.get_mut() {
       MaybeTlsStream::Tcp(stream) => Pin::new(stream).poll_flush(cx),
       #[cfg(feature = "tls")]
       MaybeTlsStream::Tls(stream) => Pin::new(stream).poll_flush(cx),
     }
   }
-  fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), std::io::Error>> {
+  fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Error>> {
     match self.get_mut() {
       MaybeTlsStream::Tcp(stream) => Pin::new(stream).poll_shutdown(cx),
       #[cfg(feature = "tls")]

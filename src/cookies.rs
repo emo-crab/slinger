@@ -173,14 +173,16 @@ impl CookieStore for Jar {
   fn set_cookies(&self, cookie_headers: &mut dyn Iterator<Item = &HeaderValue>, url: &http::Uri) {
     let iter =
       cookie_headers.filter_map(|val| Cookie::parse(val).map(|c| Cookie(c.0.into_owned())).ok());
-    self.0.write().unwrap().store_response_cookies(iter, url);
+    if let Ok(mut w) = self.0.write() {
+      w.store_response_cookies(iter, url);
+    }
   }
 
   fn cookies(&self, url: &http::Uri) -> Option<HeaderValue> {
     let s = self
       .0
       .read()
-      .unwrap()
+      .ok()?
       .get_request_values(url)
       .map(|(name, value)| format!("{name}={value}"))
       .collect::<Vec<_>>()

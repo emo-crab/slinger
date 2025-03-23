@@ -7,18 +7,10 @@ pub type Result<T> = std::result::Result<T, Error>;
 /// The Errors that may occur when processing a `slinger`.
 #[derive(ThisError, Debug)]
 pub enum Error {
-  // #[cfg(feature = "tls")]
-  // /// HandshakeError
-  // #[error(transparent)]
-  // TlsHandshake(#[from] tokio_rustls::HandshakeError<Socket>),
   #[error(transparent)]
   #[cfg(feature = "tls")]
-  /// native_tls Error
-  NativeTls(#[from] tokio_rustls::rustls::Error),
-  // #[cfg(feature = "tls")]
-  // /// openssl ErrorStack
-  // #[error(transparent)]
-  // OpenSSl(#[from] openssl::error::ErrorStack),
+  /// tls Error
+  Tls(#[from] tokio_rustls::rustls::Error),
   /// Error
   #[error(transparent)]
   IO(#[from] std::io::Error),
