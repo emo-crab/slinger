@@ -154,7 +154,7 @@ impl Request {
   /// # use slinger::{Request, RequestBuilder};
   /// let request: Request = Request::raw(http::Uri::from_static("http://httpbin.org"),"",true);
   /// assert!(request.raw_request().is_some());
-
+  ///
   pub fn raw<U, R>(uri: U, raw: R, unsafe_raw: bool) -> Request
   where
     Bytes: From<R>,
@@ -468,11 +468,7 @@ impl RequestBuilder {
   /// Build a `Request`, which can be inspected, modified and executed with
   /// `Client::execute()`.
   pub fn build(self) -> crate::Result<Request> {
-    let mut r: Request = self
-      .builder
-      .body(self.body)
-      .map_err(http::Error::from)?
-      .into();
+    let mut r: Request = self.builder.body(self.body)?.into();
     r.raw_request = self.raw;
     Ok(r)
   }
@@ -497,11 +493,7 @@ impl RequestBuilder {
   /// # }
   /// ```
   pub async fn send(self) -> crate::Result<Response> {
-    let mut req: Request = self
-      .builder
-      .body(self.body)
-      .map_err(http::Error::from)?
-      .into();
+    let mut req: Request = self.builder.body(self.body)?.into();
     *req.raw_request_mut() = self.raw;
     self.client.execute(req).await
   }

@@ -607,7 +607,7 @@ async fn read_port(proxy_socket: &mut Socket) -> Result<u16> {
   let mut port = [0u8; 2];
   proxy_socket.read_exact(&mut port).await?;
   // Convert (u8 * 2) into u16
-  let port = (port[0] as u16) << 8 | port[1] as u16;
+  let port = ((port[0] as u16) << 8) | port[1] as u16;
   Ok(port)
 }
 

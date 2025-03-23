@@ -159,7 +159,7 @@ impl Response {
   /// # Ok(())
   /// # }
   /// ```
-
+  ///
   pub fn text(&self) -> Result<String> {
     #[cfg(feature = "charset")]
     {
@@ -341,7 +341,7 @@ impl Response {
   /// # Ok(())
   /// # }
   /// ```
-
+  ///
   #[cfg(feature = "tls")]
   pub fn certificate(&self) -> Option<&PeerCertificate> {
     self.extensions().get::<PeerCertificate>()

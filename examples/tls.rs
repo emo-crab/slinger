@@ -1,9 +1,8 @@
-use slinger::tls;
-
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
   #[cfg(feature = "tls")]
   {
+    use slinger::tls;
     use slinger::ClientBuilder;
     let urls = vec![
       "https://expired.badssl.com/",

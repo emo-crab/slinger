@@ -129,7 +129,7 @@ impl Default for Policy {
   }
 }
 
-impl<'a> Attempt<'a> {
+impl Attempt<'_> {
   /// Get the type of redirect.
   pub fn response(&self) -> &Response {
     self.response
