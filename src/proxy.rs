@@ -351,6 +351,10 @@ impl ProxySocket {
           }
           Proxy::Socket(s) => {
             s.conn(&mut socket, &self.target).await?;
+            #[cfg(feature = "tls")]
+            if self.target.scheme() == Some(&http::uri::Scheme::HTTPS) {
+              socket = connector.upgrade_to_tls(socket, target_host).await?;
+            }
             Ok(socket)
           }
         }
