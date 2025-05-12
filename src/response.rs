@@ -1,7 +1,3 @@
-use std::fmt::Debug;
-use std::time::Duration;
-use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, BufReader};
-
 use crate::body::Body;
 #[cfg(feature = "cookie")]
 use crate::cookies;
@@ -20,6 +16,8 @@ use http::{Method, Response as HttpResponse};
 use mime::Mime;
 #[cfg(feature = "gzip")]
 use std::io::Read;
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, BufReader};
+use tokio::time::{timeout, Duration};
 
 /// A Response to a submitted `Request`.
 #[derive(Debug, Default, Clone)]
@@ -435,7 +433,13 @@ impl<T: AsyncRead + Unpin + Sized> ResponseBuilder<T> {
   async fn parser_version(&mut self) -> Result<(http::Version, http::StatusCode)> {
     let (mut vf, mut sf) = (false, false);
     let mut lines = Vec::new();
-    if let Ok(_length) = self.reader.read_until(b'\n', &mut lines).await {
+    if let Ok(_length) = timeout(
+      self.config.timeout.unwrap_or(Duration::from_secs(30)),
+      self.reader.read_until(b'\n', &mut lines),
+    )
+    .await
+    .map_err(|e| Error::IO(std::io::Error::new(std::io::ErrorKind::TimedOut, e)))?
+    {
       let mut version = http::Version::default();
       let mut sc = http::StatusCode::default();
       for (index, vc) in lines.splitn(3, |b| b == &b' ').enumerate() {
@@ -483,11 +487,17 @@ impl<T: AsyncRead + Unpin + Sized> ResponseBuilder<T> {
       ))
     }
   }
-  async fn read_headers(&mut self) -> http::HeaderMap {
+  async fn read_headers(&mut self) -> Result<http::HeaderMap> {
     // 读取请求头
     let mut headers = http::HeaderMap::new();
     let mut header_line = Vec::new();
-    while let Ok(length) = self.reader.read_until(b'\n', &mut header_line).await {
+    while let Ok(length) = timeout(
+      self.config.timeout.unwrap_or(Duration::from_secs(30)),
+      self.reader.read_until(b'\n', &mut header_line),
+    )
+    .await
+    .map_err(|e| Error::IO(std::io::Error::new(std::io::ErrorKind::TimedOut, e)))?
+    {
       if length == 0 || header_line == b"\r\n" {
         break;
       }
@@ -500,7 +510,7 @@ impl<T: AsyncRead + Unpin + Sized> ResponseBuilder<T> {
       };
       header_line.clear();
     }
-    headers
+    Ok(headers)
   }
   async fn read_body(&mut self, header: &http::HeaderMap) -> Result<Vec<u8>> {
     let mut body = Vec::new();
@@ -615,7 +625,7 @@ impl<T: AsyncRead + Unpin + Sized> ResponseBuilder<T> {
   pub async fn build(mut self) -> Result<Response> {
     let (v, c) = self.parser_version().await?;
     self.builder = self.builder.version(v).status(c);
-    let header = self.read_headers().await;
+    let header = self.read_headers().await?;
     // 读取body
     let body = self.read_body(&header).await?;
     if let Some(h) = self.builder.headers_mut() {
