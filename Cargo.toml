@@ -1,6 +1,6 @@
 [package]
 name = "slinger"                                              #改这个
-version = "0.2.5"
+version = "0.2.6"
 edition = "2021"
 description = "An HTTP Client for Rust designed for hackers."
 homepage = "https://github.com/emo-crab/slinger"
@@ -47,6 +47,7 @@ tokio-rustls = { version = "0.26.2", optional = true, features = ["ring", "tls12
 tokio = { version = "1", default-features = false, features = ["net", "io-util", "time"] }
 rustls-pemfile = { version = "2", optional = true }
 rustls-pki-types = { version = "1.1.0", features = ["alloc"], optional = true }
+schemars = { version = "1.0.3", optional = true, features = ["bytes1"] }
 [dev-dependencies]
 tokio = { version = "1.0", default-features = false, features = ["macros", "rt-multi-thread"] }
 futures = { version = "0.3.31" }
@@ -57,3 +58,4 @@ cookie = ["dep:cookie"]
 charset = ["dep:encoding_rs", "dep:mime"]
 serde = ["dep:serde", "http-serde"]
 gzip = ["flate2"]
+schema = ["dep:schemars", "serde"]

@@ -22,17 +22,62 @@ use tokio::time::{timeout, Duration};
 /// A Response to a submitted `Request`.
 #[derive(Debug, Default, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct Response {
   #[cfg_attr(feature = "serde", serde(with = "http_serde::version"))]
+  #[cfg_attr(
+    feature = "schema",
+    schemars(
+      with = "String",
+      title = "HTTP version",
+      description = "The protocol version used in the HTTP response",
+      example = "HTTP/1.1"
+    )
+  )]
   version: http::Version,
   #[cfg_attr(feature = "serde", serde(with = "http_serde::uri"))]
+  #[cfg_attr(
+    feature = "schema",
+    schemars(
+      with = "String",
+      title = "request URI",
+      description = "The original request URI that generated this response",
+      example = "https://example.com/api/v1/resource"
+    )
+  )]
   uri: http::Uri,
   #[cfg_attr(feature = "serde", serde(with = "http_serde::status_code"))]
+  #[cfg_attr(
+    feature = "schema",
+    schemars(
+      title = "status code",
+      description = "The HTTP status code indicating the response status",
+      example = 200,
+      schema_with = "crate::serde_schema::status_code_schema"
+    )
+  )]
   status_code: http::StatusCode,
   #[cfg_attr(feature = "serde", serde(with = "http_serde::header_map"))]
+  #[cfg_attr(
+    feature = "schema",
+    schemars(
+      with = "std::collections::HashMap<String,String>",
+      title = "response headers",
+      description = "Key-value pairs of HTTP headers included in the response",
+      example = r#"{"Content-Type": "application/json", "Cache-Control": "max-age=3600"}"#
+    )
+  )]
   headers: http::HeaderMap<http::HeaderValue>,
   #[cfg_attr(feature = "serde", serde(skip))]
   extensions: http::Extensions,
+  #[cfg_attr(
+    feature = "schema",
+    schemars(
+      title = "response body",
+      description = "Optional body content received in the HTTP response",
+      example = r#"{"data": {"id": 123, "name": "example"}}"#,
+    )
+  )]
   body: Option<Body>,
 }
 

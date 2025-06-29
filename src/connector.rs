@@ -337,9 +337,12 @@ impl Connector {
       .map_err(|e| crate::errors::Error::Other(e.to_string()))?;
     let this = self.tls.clone();
     let connect_timeout = self.connect_timeout.unwrap_or(Duration::from_secs(30));
-    let tls = stream
-      .tls(move |t| async move { tokio::time::timeout(connect_timeout, this.connect(domain, t)).await? })
-      .await?;
+    let tls =
+      stream
+        .tls(move |t| async move {
+          tokio::time::timeout(connect_timeout, this.connect(domain, t)).await?
+        })
+        .await?;
     Ok(tls)
   }
 }

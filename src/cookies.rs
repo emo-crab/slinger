@@ -115,7 +115,6 @@ impl<'a> Cookie<'a> {
     std::str::from_utf8(value.as_bytes())
       .map_err(cookie::ParseError::from)
       .and_then(cookie::Cookie::parse)
-      .map_err(cookie::ParseError::from)
       .map(Cookie)
   }
 

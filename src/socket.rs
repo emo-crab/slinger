@@ -37,7 +37,7 @@ impl Socket {
   {
     match self.inner {
       MaybeTlsStream::Tcp(t) => Ok(Self {
-        inner: MaybeTlsStream::Tls(func(t).await?),
+        inner: MaybeTlsStream::Tls(Box::new(func(t).await?)),
         read_timeout: self.read_timeout,
         write_timeout: self.write_timeout,
       }),
@@ -55,7 +55,7 @@ pub enum MaybeTlsStream {
   Tcp(TcpStream),
   #[cfg(feature = "tls")]
   /// TLS
-  Tls(TlsStream<TcpStream>),
+  Tls(Box<TlsStream<TcpStream>>),
 }
 impl MaybeTlsStream {
   #[cfg(feature = "tls")]

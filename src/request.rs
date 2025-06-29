@@ -1,40 +1,97 @@
-use std::fmt::{Debug, Formatter};
-
-use bytes::Bytes;
-use http::Request as HttpRequest;
-use http::{HeaderMap, HeaderName, HeaderValue, Method, Version};
-
-#[cfg(feature = "serde")]
-use crate::body::bytes_serde;
 use crate::body::Body;
 use crate::record::CommandRecord;
 use crate::response::parser_headers;
 use crate::{Client, Response, COLON_SPACE, CR_LF, SPACE};
+use bytes::Bytes;
+use http::Request as HttpRequest;
+use http::{HeaderMap, HeaderName, HeaderValue, Method, Version};
+use std::fmt::{Debug, Formatter};
 
 /// Unsafe specifies whether to use raw engine for sending Non RFC-Compliant requests.
 #[derive(Debug, Default, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct RawRequest {
   unsafe_raw: bool,
-  #[cfg_attr(feature = "serde", serde(with = "bytes_serde"))]
+  #[cfg_attr(feature = "serde", serde(with = "crate::serde_schema::bytes_serde"))]
+  #[cfg_attr(feature = "schema", schemars(with = "Bytes"))]
   raw: Bytes,
 }
 
 /// A request which can be executed with `Client::execute()`.
 #[derive(Default, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct Request {
+  /// The target URI of the HTTP request
   #[cfg_attr(feature = "serde", serde(with = "http_serde::uri"))]
-  uri: http::Uri,
+  #[cfg_attr(
+    feature = "schema",
+    schemars(
+      with = "String",
+      title = "request URI",
+      description = "The target URI of the HTTP request including path and query parameters",
+      example = "https://example.com/api/v1/resource?id=123"
+    )
+  )]
+  pub uri: http::Uri,
+  /// The HTTP version used for the request
   #[cfg_attr(feature = "serde", serde(with = "http_serde::version"))]
-  version: Version,
+  #[cfg_attr(
+    feature = "schema",
+    schemars(
+      with = "String",
+      title = "HTTP version",
+      description = "The protocol version of HTTP used for this request",
+      example = "HTTP/1.1"
+    )
+  )]
+  pub version: Version,
+  /// The HTTP method indicating the desired action for the resource
   #[cfg_attr(feature = "serde", serde(with = "http_serde::method"))]
-  method: Method,
+  #[cfg_attr(
+    feature = "schema",
+    schemars(
+      schema_with = "crate::serde_schema::http_method_schema",
+      title = "HTTP method",
+      description = "The HTTP method indicating the desired action for the resource",
+      example = &"GET",
+    )
+  )]
+  pub method: Method,
+  /// Collection of HTTP headers sent with the request
   #[cfg_attr(feature = "serde", serde(with = "http_serde::header_map"))]
-  headers: HeaderMap<HeaderValue>,
-  body: Option<Body>,
-  raw_request: Option<RawRequest>,
+  #[cfg_attr(
+    feature = "schema",
+    schemars(
+      with = "std::collections::HashMap<String,String>",
+      title = "HTTP headers",
+      description = "Key-value pairs of HTTP headers included in the request",
+      example = r#"&[("Content-Type", "application/json"), ("Authorization", "Bearer token")]"#
+    )
+  )]
+  pub headers: HeaderMap<HeaderValue>,
+  /// Optional body content sent with the request
+  #[cfg_attr(
+    feature = "schema",
+    schemars(
+      title = "request body",
+      description = "Optional body content sent with the HTTP request",
+      example = r#"&"{\"key\":\"value\"}""#
+    )
+  )]
+  pub body: Option<Body>,
+  /// Optional raw request representation for special cases
+  #[cfg_attr(
+    feature = "schema",
+    schemars(
+      title = "raw request",
+      description = "Optional raw representation of the HTTP request for special handling cases",
+    )
+  )]
+  pub raw_request: Option<RawRequest>,
 }
+
 impl Debug for Request {
   fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
     if let Some(raw) = &self.raw_request {

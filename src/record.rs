@@ -1,5 +1,3 @@
-#[cfg(feature = "serde")]
-use crate::body::bytes_serde;
 use crate::{Request, Response};
 use bytes::Bytes;
 use socket2::SockAddr;
@@ -25,22 +23,71 @@ pub struct RedirectRecord {
 /// HTTPRecord
 #[derive(Debug, Default, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct HTTPRecord {
   /// request
+  #[cfg_attr(
+    feature = "schema",
+    schemars(
+      title = "HTTP request",
+      description = "Structured representation of the HTTP request",
+      example = r#"{
+            "method": "GET",
+            "uri": "https://example.com/api",
+            "headers": {"Accept": "application/json"}
+        }"#
+    )
+  )]
   pub request: Request,
+  /// raw_request
   #[cfg_attr(
     feature = "serde",
-    serde(with = "bytes_serde", skip_serializing_if = "Bytes::is_empty")
+    serde(
+      with = "crate::serde_schema::bytes_serde",
+      skip_serializing_if = "Bytes::is_empty"
+    )
   )]
-  /// raw_request
+  #[cfg_attr(
+    feature = "schema",
+    schemars(
+      with = "Bytes",
+      title = "raw request bytes",
+      description = "Original raw bytes of the HTTP request for debugging purposes",
+      example = "GET /api HTTP/1.1\r\nHost: example.com\r\nAccept: application/json\r\n\r\n"
+    )
+  )]
   pub raw_request: Bytes,
   /// response
+  #[cfg_attr(
+    feature = "schema",
+    schemars(
+      title = "HTTP response",
+      description = "Structured representation of the HTTP response",
+      example = r#"{
+            "status_code": 200,
+            "headers": {"Content-Type": "application/json"},
+            "body": "{\"data\":\"value\"}"
+        }"#
+    )
+  )]
   pub response: Response,
+  /// raw_response
   #[cfg_attr(
     feature = "serde",
-    serde(with = "bytes_serde", skip_serializing_if = "Bytes::is_empty")
+    serde(
+      with = "crate::serde_schema::bytes_serde",
+      skip_serializing_if = "Bytes::is_empty"
+    )
   )]
-  /// raw_response
+  #[cfg_attr(
+    feature = "schema",
+    schemars(
+      with = "Bytes",
+      title = "raw response bytes",
+      description = "Original raw bytes of the HTTP response for debugging purposes",
+      example = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\"data\":\"value\"}"
+    )
+  )]
   pub raw_response: Bytes,
 }
 

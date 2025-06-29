@@ -123,6 +123,8 @@ pub mod record;
 pub mod redirect;
 mod request;
 mod response;
+#[cfg(feature = "serde")]
+mod serde_schema;
 mod socket;
 #[cfg(feature = "tls")]
 pub mod tls;
