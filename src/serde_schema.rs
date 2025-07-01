@@ -4,7 +4,11 @@ impl serde::Serialize for Body {
   where
     S: serde::Serializer,
   {
-    serializer.serialize_bytes(&self.inner)
+    if serializer.is_human_readable() {
+      serializer.serialize_str(&String::from_utf8_lossy(&self.inner))
+    } else {
+      serializer.serialize_bytes(&self.inner)
+    }
   }
 }
 
@@ -13,8 +17,14 @@ impl<'de> serde::Deserialize<'de> for Body {
   where
     D: serde::Deserializer<'de>,
   {
-    let s = Vec::deserialize(deserializer)?;
-    Ok(Body::from(s))
+    // 支持从字符串或字节数组反序列化
+    if deserializer.is_human_readable() {
+      let s = String::deserialize(deserializer)?;
+      Ok(Body::from(s))
+    } else {
+      let bytes: Vec<u8> = serde::Deserialize::deserialize(deserializer)?;
+      Ok(Body::from(bytes))
+    }
   }
 }
 
