@@ -1,6 +1,6 @@
 [package]
 name = "slinger"                                              #改这个
-version = "0.2.6"
+version = "0.2.7"
 edition = "2021"
 description = "An HTTP Client for Rust designed for hackers."
 homepage = "https://github.com/emo-crab/slinger"
