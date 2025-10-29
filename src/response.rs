@@ -149,7 +149,7 @@ impl Response {
   /// This requires the optional `cookie` feature to be enabled.
   #[cfg(feature = "cookie")]
   #[cfg_attr(docsrs, doc(cfg(feature = "cookie")))]
-  pub fn cookies(&self) -> impl Iterator<Item = cookies::Cookie> {
+  pub fn cookies(&self) -> impl Iterator<Item = cookies::Cookie<'_>> {
     cookies::extract_response_cookies(&self.headers).filter_map(|x| x.ok())
   }
 
@@ -667,7 +667,7 @@ impl<T: AsyncRead + Unpin + Sized> ResponseBuilder<T> {
 
   /// Build a `Response`, which can be inspected, modified and executed with
   /// `Client::execute()`.
-  pub async fn build(mut self) -> Result<Response> {
+  pub async fn build(mut self) -> Result<(Response, T)> {
     let (v, c) = self.parser_version().await?;
     self.builder = self.builder.version(v).status(c);
     let header = self.read_headers().await?;
@@ -677,7 +677,9 @@ impl<T: AsyncRead + Unpin + Sized> ResponseBuilder<T> {
       *h = header;
     }
     let resp = self.builder.body(body)?;
-    Ok(resp.into())
+    let response = resp.into();
+    let socket = self.reader.into_inner();
+    Ok((response, socket))
   }
 }
 

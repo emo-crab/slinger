@@ -13,10 +13,11 @@ use tokio_rustls::client::TlsStream;
 /// Socket
 #[derive(Debug)]
 pub struct Socket {
-  inner: MaybeTlsStream,
-  read_timeout: Option<Duration>,
-  write_timeout: Option<Duration>,
+  pub(crate) inner: MaybeTlsStream,
+  pub(crate) read_timeout: Option<Duration>,
+  pub(crate) write_timeout: Option<Duration>,
 }
+
 impl Socket {
   pub(crate) fn new(
     maybe_tls_stream: MaybeTlsStream,
@@ -27,6 +28,25 @@ impl Socket {
       inner: maybe_tls_stream,
       read_timeout,
       write_timeout,
+    }
+  }
+  #[cfg(feature = "http2")]
+  pub(crate) fn is_http2_negotiated(&self) -> bool {
+    self
+      .http2_negotiated()
+      .map(|alpn| alpn == b"h2")
+      .unwrap_or(false)
+  }
+  #[cfg(feature = "http2")]
+  pub(crate) fn http2_negotiated(&self) -> Option<Vec<u8>> {
+    match &self.inner {
+      MaybeTlsStream::Tcp(_) => None,
+      #[cfg(feature = "tls")]
+      MaybeTlsStream::Tls(tls) => tls
+        .get_ref()
+        .1
+        .alpn_protocol()
+        .map(|protocol| protocol.to_vec()),
     }
   }
   #[cfg(feature = "tls")]
@@ -54,7 +74,7 @@ pub enum MaybeTlsStream {
   /// TCP
   Tcp(TcpStream),
   #[cfg(feature = "tls")]
-  /// TLS
+  /// TLS with rustls
   Tls(Box<TlsStream<TcpStream>>),
 }
 impl MaybeTlsStream {
@@ -63,6 +83,7 @@ impl MaybeTlsStream {
   pub fn peer_certificate(&self) -> Option<PeerCertificate> {
     match &self {
       MaybeTlsStream::Tcp(_) => None,
+      #[cfg(feature = "tls")]
       MaybeTlsStream::Tls(stream) => stream
         .get_ref()
         .1

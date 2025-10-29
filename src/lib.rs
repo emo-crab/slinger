@@ -106,7 +106,7 @@
 //!
 //! - **charset**: Improved support for decoding text.
 //! - **cookie**: Provides cookie session support.
-//! - **tls**: Provides https support.
+//! - **tls**: Provides https support via rustls.
 //! - **serde**: Provides serialization and deserialization support.
 //! - **gzip**: Provides response body gzip decompression.
 //!
@@ -116,6 +116,8 @@ mod connector;
 #[cfg(feature = "cookie")]
 mod cookies;
 mod errors;
+#[cfg(feature = "http2")]
+mod h2_client;
 mod proxy;
 /// record info
 pub mod record;
@@ -147,8 +149,6 @@ pub use proxy::Proxy;
 pub use request::{RawRequest, Request, RequestBuilder};
 pub use response::{Response, ResponseBuilder, ResponseConfig};
 pub use socket::Socket;
-#[cfg(feature = "tls")]
-pub use tokio_rustls;
 
 /// Shortcut method to quickly make a `GET` request.
 ///
