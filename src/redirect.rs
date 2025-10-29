@@ -12,7 +12,7 @@ use std::str::FromStr;
 ///   the allowed maximum redirect hops in a chain.
 /// - `none` can be used to disable all redirect behavior.
 /// - `custom` can be used to create a customized policy.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub enum Policy {
   /// - `custom` can be used to create a customized policy. see [only_same_host].
   Custom(fn(Attempt) -> Action),
@@ -22,6 +22,16 @@ pub enum Policy {
   None,
 }
 
+impl PartialEq for Policy {
+  fn eq(&self, other: &Self) -> bool {
+    match (self, other) {
+      (Policy::Limit(a), Policy::Limit(b)) => *a == *b,
+      (Policy::None, Policy::None) => true,
+      (Policy::Custom(_), Policy::Custom(_)) => false,
+      _ => false,
+    }
+  }
+}
 /// A type that holds information on the current response and previous requests
 /// in redirect chain.
 #[derive(Clone, Debug, PartialEq)]

@@ -271,7 +271,7 @@ impl HttpProxy {
     let mut buffer = [0; 128];
     proxy_socket.read(&mut buffer[..]).await?;
     let reader = tokio::io::BufReader::new(buffer.as_slice());
-    let proxy_response = ResponseBuilder::new(reader, Default::default())
+    let (proxy_response, _) = ResponseBuilder::new(reader, Default::default())
       .build()
       .await?;
     if proxy_response.status_code() != http::StatusCode::OK {

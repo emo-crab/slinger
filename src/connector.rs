@@ -14,12 +14,20 @@ use tokio::net::TcpSocket;
 use tokio_rustls::rustls;
 #[cfg(feature = "tls")]
 use tokio_rustls::rustls::pki_types::ServerName;
+
+/// TLS connector type enum to support both rustls and native-tls in the future
 #[cfg(feature = "tls")]
-use tokio_rustls::TlsConnector;
+#[derive(Clone)]
+pub enum TlsConnectorType {
+  /// Rustls-based TLS connector
+  Rustls(tokio_rustls::TlsConnector),
+}
 
 /// ConnectorBuilder
 #[derive(Clone)]
 pub struct ConnectorBuilder {
+  #[cfg(feature = "http2")]
+  http2: bool,
   hostname_verification: bool,
   certs_verification: bool,
   read_timeout: Option<Duration>,
@@ -43,6 +51,8 @@ pub struct ConnectorBuilder {
 impl Default for ConnectorBuilder {
   fn default() -> Self {
     Self {
+      #[cfg(feature = "http2")]
+      http2: false,
       hostname_verification: true,
       certs_verification: true,
       read_timeout: Some(Duration::from_secs(30)),
@@ -66,6 +76,12 @@ impl Default for ConnectorBuilder {
 }
 
 impl ConnectorBuilder {
+  #[cfg(feature = "http2")]
+  /// Enable HTTP/2 support.
+  pub fn enable_http2(mut self, http2: bool) -> Self {
+    self.http2 = http2;
+    self
+  }
   /// Controls the use of hostname verification.
   ///
   /// Defaults to `false`.
@@ -200,68 +216,84 @@ impl ConnectorBuilder {
 }
 
 impl ConnectorBuilder {
+  #[cfg(feature = "tls")]
+  /// Use rustls only
+  fn only_rustls(&self) -> Result<TlsConnectorType> {
+    let mut root_cert_store = rustls::RootCertStore::empty();
+    for cert in self.certificate.clone() {
+      cert.add_to_tls(&mut root_cert_store)?;
+    }
+    let certs = rustls_native_certs::load_native_certs().certs;
+    for cert in certs {
+      root_cert_store.add(cert)?;
+    }
+    let mut versions = rustls::ALL_VERSIONS.to_vec();
+
+    if let Some(min_tls_version) = self.min_tls_version {
+      versions.retain(|&supported_version| {
+        match tls::Version::from_tls(supported_version.version) {
+          Some(version) => version >= min_tls_version,
+          // Assume it's so new we don't know about it, allow it
+          // (as of writing this is unreachable)
+          None => true,
+        }
+      });
+    }
+
+    if let Some(max_tls_version) = self.max_tls_version {
+      versions.retain(|&supported_version| {
+        match tls::Version::from_tls(supported_version.version) {
+          Some(version) => version <= max_tls_version,
+          None => false,
+        }
+      });
+    }
+
+    if versions.is_empty() {
+      return Err(crate::errors::builder("empty supported tls versions"));
+    }
+    let provider = rustls::crypto::CryptoProvider::get_default()
+      .cloned()
+      .unwrap_or_else(|| std::sync::Arc::new(rustls::crypto::ring::default_provider()));
+    let signature_algorithms = provider.signature_verification_algorithms;
+    let config_builder = rustls::ClientConfig::builder_with_provider(provider.clone())
+      .with_protocol_versions(&versions)
+      .map_err(|_| crate::errors::builder("invalid TLS versions"))?;
+    let config_builder = if !self.certs_verification {
+      config_builder
+        .dangerous()
+        .with_custom_certificate_verifier(std::sync::Arc::new(NoVerifier))
+    } else if !self.hostname_verification {
+      config_builder
+        .dangerous()
+        .with_custom_certificate_verifier(std::sync::Arc::new(IgnoreHostname::new(
+          root_cert_store,
+          signature_algorithms,
+        )))
+    } else {
+      config_builder.with_root_certificates(root_cert_store)
+    };
+    let rustls_config = if let Some(id) = self.identity.clone() {
+      id.add_to_tls(config_builder)?
+    } else {
+      config_builder.with_no_client_auth()
+    };
+    #[cfg(feature = "http2")]
+    let rustls_config = {
+      let mut config = rustls_config;
+      if self.http2 {
+        config.alpn_protocols = vec![b"http/1.1".to_vec(), b"h2".to_vec()];
+      }
+      config
+    };
+    Ok(TlsConnectorType::Rustls(tokio_rustls::TlsConnector::from(
+      std::sync::Arc::new(rustls_config),
+    )))
+  }
   /// Combine the configuration of this builder with a connector to create a `Connector`.
   pub fn build(&self) -> Result<Connector> {
     #[cfg(feature = "tls")]
-    let tls = {
-      let mut root_cert_store = rustls::RootCertStore::empty();
-      for cert in self.certificate.clone() {
-        cert.add_to_tls(&mut root_cert_store)?;
-      }
-      let mut versions = rustls::ALL_VERSIONS.to_vec();
-
-      if let Some(min_tls_version) = self.min_tls_version {
-        versions.retain(|&supported_version| {
-          match tls::Version::from_tls(supported_version.version) {
-            Some(version) => version >= min_tls_version,
-            // Assume it's so new we don't know about it, allow it
-            // (as of writing this is unreachable)
-            None => true,
-          }
-        });
-      }
-
-      if let Some(max_tls_version) = self.max_tls_version {
-        versions.retain(|&supported_version| {
-          match tls::Version::from_tls(supported_version.version) {
-            Some(version) => version <= max_tls_version,
-            None => false,
-          }
-        });
-      }
-
-      if versions.is_empty() {
-        return Err(crate::errors::builder("empty supported tls versions"));
-      }
-      let provider = rustls::crypto::CryptoProvider::get_default()
-        .cloned()
-        .unwrap_or_else(|| std::sync::Arc::new(rustls::crypto::ring::default_provider()));
-      let signature_algorithms = provider.signature_verification_algorithms;
-      let config_builder = rustls::ClientConfig::builder_with_provider(provider.clone())
-        .with_protocol_versions(&versions)
-        .map_err(|_| crate::errors::builder("invalid TLS versions"))?;
-      let config_builder = if !self.certs_verification {
-        config_builder
-          .dangerous()
-          .with_custom_certificate_verifier(std::sync::Arc::new(NoVerifier))
-      } else if !self.hostname_verification {
-        config_builder
-          .dangerous()
-          .with_custom_certificate_verifier(std::sync::Arc::new(IgnoreHostname::new(
-            root_cert_store,
-            signature_algorithms,
-          )))
-      } else {
-        config_builder.with_root_certificates(root_cert_store)
-      };
-      let tls = if let Some(id) = self.identity.clone() {
-        id.add_to_tls(config_builder)?
-      } else {
-        config_builder.with_no_client_auth()
-      };
-
-      TlsConnector::from(std::sync::Arc::new(tls))
-    };
+    let tls = { self.only_rustls()? };
     let conn = Connector {
       connect_timeout: self.connect_timeout,
       nodelay: self.nodelay,
@@ -286,7 +318,7 @@ pub struct Connector {
   write_timeout: Option<Duration>,
   proxy: Option<Proxy>,
   #[cfg(feature = "tls")]
-  tls: TlsConnector,
+  tls: TlsConnectorType,
 }
 
 impl PartialEq for Connector {
@@ -332,18 +364,21 @@ impl Connector {
   #[cfg(feature = "tls")]
   /// A `Connector` will use transport layer security (TLS) by default to connect to destinations.
   pub async fn upgrade_to_tls(&self, stream: Socket, domain: &str) -> Result<Socket> {
-    // 上面是原始socket
-    let domain = ServerName::try_from(domain.to_owned())
-      .map_err(|e| crate::errors::Error::Other(e.to_string()))?;
-    let this = self.tls.clone();
-    let connect_timeout = self.connect_timeout.unwrap_or(Duration::from_secs(30));
-    let tls =
-      stream
-        .tls(move |t| async move {
-          tokio::time::timeout(connect_timeout, this.connect(domain, t)).await?
-        })
-        .await?;
-    Ok(tls)
+    match &self.tls {
+      TlsConnectorType::Rustls(connector) => {
+        // Rustls implementation
+        let domain = ServerName::try_from(domain.to_owned())
+          .map_err(|e| crate::errors::Error::Other(e.to_string()))?;
+        let this = connector.clone();
+        let connect_timeout = self.connect_timeout.unwrap_or(Duration::from_secs(30));
+        let tls = stream
+          .tls(move |t| async move {
+            tokio::time::timeout(connect_timeout, this.connect(domain, t)).await?
+          })
+          .await?;
+        Ok(tls)
+      }
+    }
   }
 }
 

@@ -1,3 +1,4 @@
+use std::collections::btree_map::Entry;
 use std::collections::BTreeMap;
 use std::fmt::{Debug, Formatter};
 use std::str::FromStr;
@@ -228,30 +229,52 @@ impl Client {
   ///
   /// This method fails if there was an error while sending request,
   /// or redirect limit was exhausted.
-  pub async fn execute_request(&self, socket: &mut Socket, request: &Request) -> Result<Response> {
-    let raw: Bytes = request.to_raw();
-    #[cfg(feature = "tls")]
-    let mut peer_certificate: Option<PeerCertificate> = None;
-    #[cfg(feature = "tls")]
-    {
-      if let Some(pc) = socket.peer_certificate() {
-        peer_certificate = Some(pc);
+  pub async fn execute_request(
+    &self,
+    socket_opt: Option<Socket>,
+    request: &Request,
+  ) -> Result<(Response, Option<Socket>)> {
+    if let Some(mut socket) = socket_opt {
+      #[cfg(feature = "http2")]
+      {
+        // Check if HTTP/2 was negotiated via ALPN
+        if socket.is_http2_negotiated() {
+          let response =
+            crate::h2_client::send_h2_request(socket, request, self.inner.timeout).await?;
+          return Ok((response, None));
+        }
       }
-    }
-    socket.write_all(&raw).await?;
-    socket.flush().await?;
-    let reader = tokio::io::BufReader::new(socket);
-    let mut irp = ResponseBuilder::new(reader, ResponseConfig::new(request, self.inner.timeout))
-      .build()
-      .await?;
-    *irp.url_mut() = request.uri().clone();
-    #[cfg(feature = "tls")]
-    {
-      if let Some(cert) = peer_certificate {
-        irp.extensions_mut().insert(cert);
+      // HTTP/1.1 path (existing code)
+      let raw: Bytes = request.to_raw();
+      #[cfg(feature = "tls")]
+      let mut peer_certificate: Option<PeerCertificate> = None;
+      #[cfg(feature = "tls")]
+      {
+        if let Some(pc) = socket.peer_certificate() {
+          peer_certificate = Some(pc);
+        }
       }
+      socket.write_all(&raw).await?;
+      socket.flush().await?;
+      let reader = tokio::io::BufReader::new(socket);
+      let (mut irp, socket) =
+        ResponseBuilder::new(reader, ResponseConfig::new(request, self.inner.timeout))
+          .build()
+          .await?;
+      *irp.url_mut() = request.uri().clone();
+      #[cfg(feature = "tls")]
+      {
+        if let Some(cert) = peer_certificate {
+          irp.extensions_mut().insert(cert);
+        }
+      }
+      Ok((irp, Some(socket)))
+    } else {
+      Err(new_io_error(
+        std::io::ErrorKind::NotConnected,
+        "socket is None",
+      ))
     }
-    Ok(irp)
   }
   /// Executes a `Request`.
   ///
@@ -270,7 +293,7 @@ impl Client {
     let mut request = request.into();
     let mut cur_uri = request.uri().clone();
     let mut uris = vec![];
-    let mut conn: BTreeMap<String, Socket> = BTreeMap::new();
+    let mut conn: BTreeMap<String, Option<Socket>> = BTreeMap::new();
     // 连接一次，同一个主机地址下复用socket连接
     let uniq_key = |u: &http::Uri| -> String {
       let scheme = u.scheme_str().unwrap_or_default();
@@ -309,21 +332,31 @@ impl Client {
           .insert(http::header::CONNECTION, HeaderValue::from_static("close"));
       }
       record.record_request(&request);
-      let socket = conn
-        .entry(uniq_key(&cur_uri))
-        .or_insert(self.inner.connector.connect_with_uri(&cur_uri).await?);
-      let mut response = self.execute_request(socket, &request).await?;
+      let key = uniq_key(&cur_uri);
+      let socket = match conn.entry(key) {
+        Entry::Occupied(mut entry) => {
+          entry.get_mut().take() // take out the Option<Socket>
+        }
+        Entry::Vacant(entry) => {
+          let new_socket = self.inner.connector.connect_with_uri(&cur_uri).await?;
+          entry.insert(None); // placeholder
+          Some(new_socket)
+        }
+      };
+      let (mut response, socket) = self.execute_request(socket, &request).await?;
       response.extensions_mut().insert(request.clone());
-      if let (Ok(remote_addr), Ok(local_addr)) = (socket.peer_addr(), socket.local_addr()) {
-        response.extensions_mut().insert(LocalPeerRecord {
-          remote_addr: remote_addr.into(),
-          local_addr: local_addr.into(),
-        });
+      if let Some(socket) = socket {
+        if let (Ok(remote_addr), Ok(local_addr)) = (socket.peer_addr(), socket.local_addr()) {
+          response.extensions_mut().insert(LocalPeerRecord {
+            remote_addr: remote_addr.into(),
+            local_addr: local_addr.into(),
+          });
+        }
       };
       if let Some(cv) = response.headers().get(http::header::CONNECTION) {
         match cv.to_str().unwrap_or_default() {
           "keep-alive" => {
-            if let Some(s) = conn.get_mut(&uniq_key(&cur_uri)) {
+            if let Some(Some(s)) = conn.get_mut(&uniq_key(&cur_uri)) {
               if s.peer_addr().is_err() {
                 *s = self.inner.connector.connect_with_uri(&cur_uri).await?;
               }
@@ -420,8 +453,10 @@ impl Client {
       records.push(record);
       break;
     }
-    for (_key, mut socket) in conn {
-      socket.shutdown().await?;
+    for (_key, socket) in conn {
+      if let Some(mut s) = socket {
+        s.shutdown().await?;
+      }
     }
     let mut last_response = records
       .last()
@@ -535,6 +570,10 @@ impl ClientBuilder {
       if let Some(identity) = config.identity {
         connector_builder = connector_builder.identity(identity);
       }
+    }
+    #[cfg(feature = "http2")]
+    {
+      connector_builder = connector_builder.enable_http2(config.http2);
     }
     let connector = connector_builder.build()?;
     Ok(Client {
@@ -831,9 +870,17 @@ impl ClientBuilder {
     self.config.max_tls_version = version;
     self
   }
+  #[cfg(feature = "http2")]
+  /// Enable or disable HTTP/2 support.
+  pub fn enable_http2(mut self, http2: bool) -> Self {
+    self.config.http2 = http2;
+    self
+  }
 }
 #[derive(Clone)]
 struct Config {
+  #[cfg(feature = "http2")]
+  http2: bool,
   timeout: Option<Duration>,
   connect_timeout: Option<Duration>,
   read_timeout: Option<Duration>,
@@ -878,6 +925,8 @@ impl Debug for Config {
 impl Default for Config {
   fn default() -> Self {
     Self {
+      #[cfg(feature = "http2")]
+      http2: false,
       timeout: Some(Duration::from_secs(30)),
       connect_timeout: Some(Duration::from_secs(10)),
       read_timeout: Some(Duration::from_secs(30)),

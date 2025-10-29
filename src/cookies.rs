@@ -201,6 +201,6 @@ pub(crate) fn extract_response_cookie_headers(
 
 pub(crate) fn extract_response_cookies(
   headers: &http::HeaderMap,
-) -> impl Iterator<Item = Result<Cookie, cookie::ParseError>> {
+) -> impl Iterator<Item = Result<Cookie<'_>, cookie::ParseError>> {
   headers.get_all(SET_COOKIE).iter().map(Cookie::parse)
 }
