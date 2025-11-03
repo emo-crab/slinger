@@ -3,7 +3,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
   #[cfg(feature = "cookie")]
   {
     use slinger::ClientBuilder;
-    let client = ClientBuilder::new().cookie_store(true).build().unwrap();
+    let client = ClientBuilder::default().cookie_store(true).build().unwrap();
     let resp = client
       .get("http://httpbin.org/cookies/set/key/value")
       .send()

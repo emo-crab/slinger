@@ -3,7 +3,7 @@ use slinger::{ClientBuilder, Request};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-  let client = ClientBuilder::new()
+  let client = ClientBuilder::default()
     .user_agent(HeaderValue::from_static(
       "Mozilla/5.0 (X11; Linux x86_64; rv:123.0) Gecko/20100101 Firefox/123.0",
     ))

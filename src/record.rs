@@ -1,15 +1,5 @@
 use crate::{Request, Response};
 use bytes::Bytes;
-use socket2::SockAddr;
-
-/// http peer_addr and local_addr
-#[derive(Clone, Debug)]
-pub struct LocalPeerRecord {
-  /// peer_addr
-  pub remote_addr: SockAddr,
-  /// local_addr
-  pub local_addr: SockAddr,
-}
 
 /// redirect info
 #[derive(Clone, Debug)]

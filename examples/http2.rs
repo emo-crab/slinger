@@ -15,7 +15,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     use slinger::ClientBuilder;
     // Example 2: HTTP/2 with standard TLS (rustls)
     println!("=== HTTP/2 with Rustls TLS ===");
-    let client = ClientBuilder::new().enable_http2(true).build()?;
+    let client = ClientBuilder::default().enable_http2(true).build()?;
     // Note: Rustls doesn't support HTTP/2 ALPN by default in this configuration
     // This will likely fall back to HTTP/1.1
     let resp = client.get("https://httpbin.org/").send().await?;

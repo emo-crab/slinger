@@ -15,8 +15,10 @@ use tokio::io::{AsyncRead, AsyncWrite};
 /// Wrapper for MaybeTlsStream that allows h2 to work with any stream type
 enum StreamWrapper {
   Tcp(tokio::net::TcpStream),
-  #[cfg(feature = "tls")]
+  #[cfg(feature = "rustls")]
   Tls(Box<tokio_rustls::client::TlsStream<tokio::net::TcpStream>>),
+  #[cfg(all(feature = "tls", not(feature = "rustls")))]
+  Custom(Box<dyn crate::socket::CustomTlsStream>),
 }
 
 impl AsyncRead for StreamWrapper {
@@ -27,8 +29,10 @@ impl AsyncRead for StreamWrapper {
   ) -> Poll<std::io::Result<()>> {
     match self.get_mut() {
       StreamWrapper::Tcp(stream) => Pin::new(stream).poll_read(cx, buf),
-      #[cfg(feature = "tls")]
+      #[cfg(feature = "rustls")]
       StreamWrapper::Tls(stream) => Pin::new(stream).poll_read(cx, buf),
+      #[cfg(all(feature = "tls", not(feature = "rustls")))]
+      StreamWrapper::Custom(stream) => Pin::new(stream).poll_read(cx, buf),
     }
   }
 }
@@ -41,24 +45,30 @@ impl AsyncWrite for StreamWrapper {
   ) -> Poll<Result<usize, std::io::Error>> {
     match self.get_mut() {
       StreamWrapper::Tcp(stream) => Pin::new(stream).poll_write(cx, buf),
-      #[cfg(feature = "tls")]
+      #[cfg(feature = "rustls")]
       StreamWrapper::Tls(stream) => Pin::new(stream).poll_write(cx, buf),
+      #[cfg(all(feature = "tls", not(feature = "rustls")))]
+      StreamWrapper::Custom(stream) => Pin::new(stream).poll_write(cx, buf),
     }
   }
 
   fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), std::io::Error>> {
     match self.get_mut() {
       StreamWrapper::Tcp(stream) => Pin::new(stream).poll_flush(cx),
-      #[cfg(feature = "tls")]
+      #[cfg(feature = "rustls")]
       StreamWrapper::Tls(stream) => Pin::new(stream).poll_flush(cx),
+      #[cfg(all(feature = "tls", not(feature = "rustls")))]
+      StreamWrapper::Custom(stream) => Pin::new(stream).poll_flush(cx),
     }
   }
 
   fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), std::io::Error>> {
     match self.get_mut() {
       StreamWrapper::Tcp(stream) => Pin::new(stream).poll_shutdown(cx),
-      #[cfg(feature = "tls")]
+      #[cfg(feature = "rustls")]
       StreamWrapper::Tls(stream) => Pin::new(stream).poll_shutdown(cx),
+      #[cfg(all(feature = "tls", not(feature = "rustls")))]
+      StreamWrapper::Custom(stream) => Pin::new(stream).poll_shutdown(cx),
     }
   }
 }
@@ -74,8 +84,10 @@ pub(crate) async fn send_h2_request(
 
   let io = match socket.inner {
     MaybeTlsStream::Tcp(tcp_stream) => StreamWrapper::Tcp(tcp_stream),
-    #[cfg(feature = "tls")]
-    MaybeTlsStream::Tls(tls_stream) => StreamWrapper::Tls(tls_stream),
+    #[cfg(feature = "rustls")]
+    MaybeTlsStream::Rustls(tls_stream) => StreamWrapper::Tls(tls_stream),
+    #[cfg(all(feature = "tls", not(feature = "rustls")))]
+    MaybeTlsStream::Custom(tls_stream) => StreamWrapper::Custom(tls_stream),
   };
 
   // Create an h2 client handshake

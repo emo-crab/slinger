@@ -2,7 +2,9 @@ use crate::errors::Result;
 use crate::proxy::{Proxy, ProxySocket};
 use crate::socket::{MaybeTlsStream, Socket};
 #[cfg(feature = "tls")]
-use crate::tls::{Identity, IgnoreHostname, NoVerifier};
+use crate::tls::Identity;
+#[cfg(feature = "rustls")]
+use crate::tls::{IgnoreHostname, NoVerifier};
 #[cfg(feature = "tls")]
 use crate::{tls, Certificate};
 use socket2::Socket as RawSocket;
@@ -10,17 +12,68 @@ use socket2::{Domain, Protocol, Type};
 use std::net::SocketAddr;
 use std::time::Duration;
 use tokio::net::TcpSocket;
-#[cfg(feature = "tls")]
+#[cfg(feature = "rustls")]
 use tokio_rustls::rustls;
-#[cfg(feature = "tls")]
+#[cfg(feature = "rustls")]
 use tokio_rustls::rustls::pki_types::ServerName;
 
-/// TLS connector type enum to support both rustls and native-tls in the future
+/// TLS connector type enum to support rustls and custom connectors
 #[cfg(feature = "tls")]
 #[derive(Clone)]
 pub enum TlsConnectorType {
   /// Rustls-based TLS connector
+  #[cfg(feature = "rustls")]
   Rustls(tokio_rustls::TlsConnector),
+  /// Custom TLS connector callback
+  #[cfg(not(feature = "rustls"))]
+  Custom(std::sync::Arc<dyn CustomTlsConnector>),
+}
+
+#[cfg(all(feature = "tls", not(feature = "rustls")))]
+/// Trait for custom TLS connector implementations.
+///
+/// This trait allows users to implement their own TLS handshake logic when the `tls` feature
+/// is enabled without the `rustls` backend.
+///
+/// # Example
+///
+/// ```ignore
+/// use slinger::connector::CustomTlsConnector;
+/// use slinger::Socket;
+/// use tokio::net::TcpStream;
+///
+/// struct MyTlsConnector;
+///
+/// impl CustomTlsConnector for MyTlsConnector {
+///     fn connect<'a>(
+///         &'a self,
+///         domain: &'a str,
+///         stream: Socket,
+///     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Socket>> + Send + 'a>> {
+///         Box::pin(async move {
+///             // Implement your custom TLS handshake here
+///             // You can use openssl, boringssl, or any other TLS library
+///             todo!("Implement custom TLS handshake")
+///         })
+///     }
+/// }
+/// ```
+pub trait CustomTlsConnector: Send + Sync + 'static {
+  /// Perform TLS handshake on the given TCP stream.
+  ///
+  /// # Arguments
+  ///
+  /// * `domain` - The domain name for SNI (Server Name Indication)
+  /// * `stream` - The TCP socket to upgrade to TLS
+  ///
+  /// # Returns
+  ///
+  /// Returns a `Socket` wrapping the TLS stream on success.
+  fn connect<'a>(
+    &'a self,
+    domain: &'a str,
+    stream: Socket,
+  ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Socket>> + Send + 'a>>;
 }
 
 /// ConnectorBuilder
@@ -46,6 +99,8 @@ pub struct ConnectorBuilder {
   #[cfg(feature = "tls")]
   certificate: Vec<Certificate>,
   proxy: Option<Proxy>,
+  #[cfg(all(feature = "tls", not(feature = "rustls")))]
+  custom_tls_connector: Option<std::sync::Arc<dyn CustomTlsConnector>>,
 }
 
 impl Default for ConnectorBuilder {
@@ -71,6 +126,8 @@ impl Default for ConnectorBuilder {
       #[cfg(feature = "tls")]
       certificate: vec![],
       proxy: None,
+      #[cfg(all(feature = "tls", not(feature = "rustls")))]
+      custom_tls_connector: None,
     }
   }
 }
@@ -193,8 +250,7 @@ impl ConnectorBuilder {
   ///
   /// # Optional
   ///
-  /// This requires the optional `tls`
-  /// feature to be enabled.
+  /// This requires the optional `tls` feature to be enabled.
   #[cfg(feature = "tls")]
   pub fn min_tls_version(mut self, version: Option<tls::Version>) -> ConnectorBuilder {
     self.min_tls_version = version;
@@ -206,17 +262,57 @@ impl ConnectorBuilder {
   ///
   /// # Optional
   ///
-  /// This requires the optional `tls`
-  /// feature to be enabled.
+  /// This requires the optional `tls` feature to be enabled.
   #[cfg(feature = "tls")]
   pub fn max_tls_version(mut self, version: Option<tls::Version>) -> ConnectorBuilder {
     self.max_tls_version = version;
     self
   }
+
+  /// Set a custom TLS connector for custom TLS handshake implementations.
+  ///
+  /// This is only available when the `tls` feature is enabled without the
+  /// `rustls` backend. It allows you to provide your own TLS
+  /// implementation using libraries like openssl, boringssl, native-tls, or any other TLS library.
+  ///
+  /// # Example
+  ///
+  /// ```ignore
+  /// use slinger::connector::{ConnectorBuilder, CustomTlsConnector};
+  /// use slinger::{Result, Socket};
+  /// use std::sync::Arc;
+  ///
+  /// struct MyTlsConnector;
+  ///
+  /// impl CustomTlsConnector for MyTlsConnector {
+  ///     fn connect<'a>(
+  ///         &'a self,
+  ///         stream: Socket,
+  ///         domain: &'a str,
+  ///     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Socket>> + Send + 'a>> {
+  ///         Box::pin(async move {
+  ///             // Your custom TLS handshake logic here
+  ///             todo!()
+  ///         })
+  ///     }
+  /// }
+  ///
+  /// let connector = ConnectorBuilder::default()
+  ///     .custom_tls_connector(Arc::new(MyTlsConnector))
+  ///     .build()?;
+  /// ```
+  #[cfg(all(feature = "tls", not(feature = "rustls")))]
+  pub fn custom_tls_connector(
+    mut self,
+    connector: std::sync::Arc<dyn CustomTlsConnector>,
+  ) -> ConnectorBuilder {
+    self.custom_tls_connector = Some(connector);
+    self
+  }
 }
 
 impl ConnectorBuilder {
-  #[cfg(feature = "tls")]
+  #[cfg(feature = "rustls")]
   /// Use rustls only
   fn only_rustls(&self) -> Result<TlsConnectorType> {
     let mut root_cert_store = rustls::RootCertStore::empty();
@@ -290,10 +386,27 @@ impl ConnectorBuilder {
       std::sync::Arc::new(rustls_config),
     )))
   }
+
   /// Combine the configuration of this builder with a connector to create a `Connector`.
   pub fn build(&self) -> Result<Connector> {
     #[cfg(feature = "tls")]
-    let tls = { self.only_rustls()? };
+    let tls = {
+      #[cfg(feature = "rustls")]
+      {
+        self.only_rustls()?
+      }
+      #[cfg(not(feature = "rustls"))]
+      {
+        // When only tls feature is enabled, require a custom connector
+        if let Some(custom) = &self.custom_tls_connector {
+          TlsConnectorType::Custom(custom.clone())
+        } else {
+          return Err(crate::errors::builder(
+            "TLS feature enabled without backend: please enable 'rustls' feature, or provide a custom TLS connector using .custom_tls_connector()"
+          ));
+        }
+      }
+    };
     let conn = Connector {
       connect_timeout: self.connect_timeout,
       nodelay: self.nodelay,
@@ -365,17 +478,48 @@ impl Connector {
   /// A `Connector` will use transport layer security (TLS) by default to connect to destinations.
   pub async fn upgrade_to_tls(&self, stream: Socket, domain: &str) -> Result<Socket> {
     match &self.tls {
+      #[cfg(feature = "rustls")]
       TlsConnectorType::Rustls(connector) => {
         // Rustls implementation
         let domain = ServerName::try_from(domain.to_owned())
           .map_err(|e| crate::errors::Error::Other(e.to_string()))?;
-        let this = connector.clone();
         let connect_timeout = self.connect_timeout.unwrap_or(Duration::from_secs(30));
-        let tls = stream
-          .tls(move |t| async move {
-            tokio::time::timeout(connect_timeout, this.connect(domain, t)).await?
-          })
-          .await?;
+        match stream.inner {
+          MaybeTlsStream::Tcp(t) => {
+            let s = tokio::time::timeout(connect_timeout, connector.connect(domain, t))
+              .await
+              .map_err(|e| {
+                crate::errors::new_io_error(std::io::ErrorKind::TimedOut, &e.to_string())
+              })?
+              .map_err(|e| {
+                crate::errors::Error::Other(format!("rustls handshake failed: {}", e))
+              })?;
+            let tls = Socket::new(
+              MaybeTlsStream::Rustls(s.into()),
+              stream.read_timeout,
+              stream.write_timeout,
+            );
+            Ok(tls)
+          }
+          MaybeTlsStream::Rustls(t) => Ok(Socket::new(
+            MaybeTlsStream::Rustls(t),
+            stream.read_timeout,
+            stream.write_timeout,
+          )),
+          #[cfg(all(feature = "tls", not(feature = "rustls")))]
+          MaybeTlsStream::Custom(t) => Ok(Socket::new(
+            MaybeTlsStream::Custom(t),
+            stream.read_timeout,
+            stream.write_timeout,
+          )),
+        }
+      }
+      #[cfg(not(feature = "rustls"))]
+      TlsConnectorType::Custom(connector) => {
+        // Custom TLS implementation
+        // let connect_timeout = self.connect_timeout.unwrap_or(Duration::from_secs(30));
+        let domain = domain.to_string();
+        let tls = connector.connect(&domain, stream).await?;
         Ok(tls)
       }
     }

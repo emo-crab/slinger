@@ -2,7 +2,7 @@ use crate::body::Body;
 #[cfg(feature = "cookie")]
 use crate::cookies;
 use crate::errors::{new_io_error, Error, Result};
-use crate::record::{HTTPRecord, LocalPeerRecord, RedirectRecord};
+use crate::record::{HTTPRecord, RedirectRecord};
 #[cfg(feature = "tls")]
 use crate::tls::PeerCertificate;
 use crate::{Request, COLON_SPACE, CR_LF, SPACE};
@@ -359,20 +359,6 @@ impl Response {
 
 /// 放一些响应中间过程记录，存起来方便获取
 impl Response {
-  /// Get the remote address used to get this `Response`.
-  ///
-  /// # Example
-  ///
-  /// ```rust
-  /// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
-  /// let resp = slinger::get("http://httpbin.org/redirect/1").await?;
-  /// println!("httpbin.org address: {:?}", resp.local_peer_record());
-  /// # Ok(())
-  /// # }
-  /// ```
-  pub fn local_peer_record(&self) -> Option<&LocalPeerRecord> {
-    self.extensions().get::<LocalPeerRecord>()
-  }
   /// Get the certificate to get this `Response`.
   ///
   /// # Example

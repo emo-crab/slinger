@@ -25,7 +25,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
       "https://dh1024.badssl.com/",
     ];
 
-    let client = ClientBuilder::new()
+    let client = ClientBuilder::default()
       .min_tls_version(Some(tls::Version::TLS_1_0))
       .build()
       .unwrap();

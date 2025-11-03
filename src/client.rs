@@ -9,7 +9,7 @@ use std::time::Duration;
 use crate::cookies;
 use crate::errors::{new_io_error, Result};
 use crate::proxy::Proxy;
-use crate::record::{HTTPRecord, LocalPeerRecord, RedirectRecord};
+use crate::record::{HTTPRecord, RedirectRecord};
 use crate::redirect::{remove_sensitive_headers, Action, Policy};
 use crate::response::{ResponseBuilder, ResponseConfig};
 use crate::socket::Socket;
@@ -65,13 +65,13 @@ impl Client {
   /// See docs
   /// on [`slinger`][Client] for details.
   pub fn new() -> Client {
-    ClientBuilder::new().build().expect("Client::new()")
+    ClientBuilder::default().build().expect("Client::new()")
   }
   /// Creates a `ClientBuilder` to configure a `Client`.
   ///
-  /// This is the same as `ClientBuilder::new()`.
+  /// This is the same as `ClientBuilder::default()`.
   pub fn builder() -> ClientBuilder {
-    ClientBuilder::new()
+    ClientBuilder::default()
   }
   /// Convenience method to make a `GET` request to a URL.
   ///
@@ -345,20 +345,12 @@ impl Client {
       };
       let (mut response, socket) = self.execute_request(socket, &request).await?;
       response.extensions_mut().insert(request.clone());
-      if let Some(socket) = socket {
-        if let (Ok(remote_addr), Ok(local_addr)) = (socket.peer_addr(), socket.local_addr()) {
-          response.extensions_mut().insert(LocalPeerRecord {
-            remote_addr: remote_addr.into(),
-            local_addr: local_addr.into(),
-          });
-        }
-      };
       if let Some(cv) = response.headers().get(http::header::CONNECTION) {
         match cv.to_str().unwrap_or_default() {
           "keep-alive" => {
             if let Some(Some(s)) = conn.get_mut(&uniq_key(&cur_uri)) {
-              if s.peer_addr().is_err() {
-                *s = self.inner.connector.connect_with_uri(&cur_uri).await?;
+              if let Some(socket) = socket {
+                *s = socket;
               }
             }
             if !self.inner.keepalive {
@@ -519,26 +511,12 @@ fn make_referer(next: &http::Uri, previous: &http::Uri) -> Option<HeaderValue> {
 /// # }
 /// ```
 #[must_use]
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct ClientBuilder {
   config: Config,
 }
 
-impl Default for ClientBuilder {
-  fn default() -> Self {
-    Self::new()
-  }
-}
-
 impl ClientBuilder {
-  /// Constructs a new `ClientBuilder`.
-  ///
-  /// This is the same as `Client::builder()`.
-  pub fn new() -> ClientBuilder {
-    ClientBuilder {
-      config: Config::default(),
-    }
-  }
   /// Returns a `Client` that uses this `ClientBuilder` configuration.
   ///
   /// # Errors
@@ -552,29 +530,36 @@ impl ClientBuilder {
   /// [`slinger::client`][Client] for details.
   pub fn build(self) -> Result<Client> {
     let config = self.config;
-    let mut connector_builder = ConnectorBuilder::default()
-      .proxy(config.proxy)
-      .read_timeout(config.read_timeout)
-      .connect_timeout(config.connect_timeout)
-      .write_timeout(config.timeout);
-    connector_builder = connector_builder.nodelay(config.nodelay);
-    #[cfg(feature = "tls")]
-    {
-      connector_builder = connector_builder
-        .hostname_verification(config.hostname_verification)
-        .certs_verification(config.certs_verification)
-        .certificate(config.root_certs)
-        .tls_sni(config.tls_sni)
-        .min_tls_version(config.min_tls_version)
-        .max_tls_version(config.max_tls_version);
-      if let Some(identity) = config.identity {
-        connector_builder = connector_builder.identity(identity);
+    let connector_builder = if let Some(custom_builder) = config.connector_builder {
+      // Use the custom connector builder directly
+      custom_builder
+    } else {
+      // Build default connector with config values
+      let mut default_builder = ConnectorBuilder::default()
+        .proxy(config.proxy)
+        .read_timeout(config.read_timeout)
+        .connect_timeout(config.connect_timeout)
+        .write_timeout(config.timeout);
+      default_builder = default_builder.nodelay(config.nodelay);
+      #[cfg(feature = "tls")]
+      {
+        default_builder = default_builder
+          .hostname_verification(config.hostname_verification)
+          .certs_verification(config.certs_verification)
+          .certificate(config.root_certs)
+          .tls_sni(config.tls_sni)
+          .min_tls_version(config.min_tls_version)
+          .max_tls_version(config.max_tls_version);
+        if let Some(identity) = config.identity {
+          default_builder = default_builder.identity(identity);
+        }
       }
-    }
-    #[cfg(feature = "http2")]
-    {
-      connector_builder = connector_builder.enable_http2(config.http2);
-    }
+      #[cfg(feature = "http2")]
+      {
+        default_builder = default_builder.enable_http2(config.http2);
+      }
+      default_builder
+    };
     let connector = connector_builder.build()?;
     Ok(Client {
       inner: Arc::new(ClientRef {
@@ -876,6 +861,53 @@ impl ClientBuilder {
     self.config.http2 = http2;
     self
   }
+  /// Set a custom `ConnectorBuilder` for the client.
+  ///
+  /// This allows you to fully customize the connector configuration.
+  /// When a custom connector builder is provided, it will be used directly
+  /// instead of the default one.
+  ///
+  /// # Important
+  ///
+  /// When using this method, ALL connector-related settings configured through
+  /// `ClientBuilder` methods will be ignored, including:
+  /// - `tcp_nodelay()`
+  /// - `add_root_certificate()`
+  /// - `identity()`
+  /// - `danger_accept_invalid_hostnames()`
+  /// - `danger_accept_invalid_certs()`
+  /// - `tls_sni()`
+  /// - `min_tls_version()` and `max_tls_version()`
+  /// - `connect_timeout()`, `read_timeout()`, and `timeout()` for the connector
+  /// - `proxy()` for the connector
+  /// - `enable_http2()` for the connector
+  ///
+  /// You must configure all these settings directly on the `ConnectorBuilder` instead.
+  /// Client-level settings like `keepalive()`, `cookie_store()`, `redirect()`, etc.
+  /// will still be respected.
+  ///
+  /// # Example
+  ///
+  /// ```rust
+  /// use slinger::{Client, ConnectorBuilder};
+  /// use std::time::Duration;
+  ///
+  /// # fn doc() -> Result<(), slinger::Error> {
+  /// let custom_connector = ConnectorBuilder::default()
+  ///     .connect_timeout(Some(Duration::from_secs(5)))
+  ///     .read_timeout(Some(Duration::from_secs(10)))
+  ///     .nodelay(true);
+  ///
+  /// let client = Client::builder()
+  ///     .connector_builder(custom_connector)
+  ///     .build()?;
+  /// # Ok(())
+  /// # }
+  /// ```
+  pub fn connector_builder(mut self, connector_builder: ConnectorBuilder) -> ClientBuilder {
+    self.config.connector_builder = Some(connector_builder);
+    self
+  }
 }
 #[derive(Clone)]
 struct Config {
@@ -904,6 +936,7 @@ struct Config {
   redirect_policy: Policy,
   #[cfg(feature = "cookie")]
   cookie_store: Option<Arc<dyn cookies::CookieStore + Send + Sync + 'static>>,
+  connector_builder: Option<ConnectorBuilder>,
 }
 
 impl Debug for Config {
@@ -950,6 +983,7 @@ impl Default for Config {
       redirect_policy: Policy::Limit(10),
       #[cfg(feature = "cookie")]
       cookie_store: None,
+      connector_builder: None,
     }
   }
 }

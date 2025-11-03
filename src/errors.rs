@@ -8,7 +8,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 #[derive(ThisError, Debug)]
 pub enum Error {
   #[error(transparent)]
-  #[cfg(feature = "tls")]
+  #[cfg(feature = "rustls")]
   /// tls Error
   Tls(#[from] tokio_rustls::rustls::Error),
   /// Error
