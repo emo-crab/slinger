@@ -23,7 +23,7 @@ X: GET http://192.168.83.1:8080/admin.jsp HTTP/1.0
 
 "#;
   // let proxy = slinger::Proxy::parse("http://127.0.0.1:8080").unwrap();
-  let client = ClientBuilder::new().build().unwrap();
+  let client = ClientBuilder::default().build().unwrap();
   // replace \n to \r\n
   let raw = raw.replace('\n', "\r\n");
   let resp = client
@@ -47,7 +47,7 @@ Host: notlocalhost
 
 
 "#;
-  let client = ClientBuilder::new().build().unwrap();
+  let client = ClientBuilder::default().build().unwrap();
   // replace \n to \r\n
   let raw = raw.replace('\n', "\r\n");
   let resp = client

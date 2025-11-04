@@ -75,7 +75,7 @@ This example enables some optional features, so your `Cargo.toml` could look lik
 
 ```toml
 [dependencies]
-slinger = { version = "0.2.2", features = ["serde", "cookie", "charset", "tls", "gzip"] }
+slinger = { version = "0.2.2", features = ["serde", "cookie", "charset", "tls", "rustls", "gzip"] }
 ```
 
 And then the code:
@@ -88,6 +88,41 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
   Ok(())
 }
 ```
+
+<!-- FEATURES -->
+
+## Features
+
+Slinger supports the following optional features:
+
+- `tls` - Base TLS feature (enables TLS types and interfaces without a specific backend)
+- `rustls` - HTTPS support using Rustls (requires `tls`, pure Rust implementation)
+- `http2` - HTTP/2 protocol support (requires a TLS backend)
+- `cookie` - Cookie handling support
+- `charset` - Character encoding support
+- `serde` - Serialization/deserialization support
+- `gzip` - Gzip compression support
+- `schema` - JSON Schema support
+
+### TLS Backend Selection
+
+To use TLS, you must:
+1. Enable the `tls` feature
+2. Choose the `rustls` backend, OR provide a custom TLS connector
+
+Example feature combinations:
+```toml
+# Using rustls backend
+slinger = { version = "0.2.8", features = ["tls", "rustls"] }
+
+# Using custom TLS backend (requires implementing CustomTlsConnector)
+slinger = { version = "0.2.8", features = ["tls"] }
+```
+
+### Custom TLS Backend (e.g., native-tls, OpenSSL)
+
+If you want to use native-tls, OpenSSL, or other TLS libraries, you can implement a custom TLS connector.
+See the [native_tls_example.rs](examples/native_tls_example.rs) for a complete example of how to integrate native-tls.
 
 <!-- USAGE EXAMPLES -->
 
@@ -116,7 +151,7 @@ X: GET http://192.168.83.1:8080/admin.jsp HTTP/1.0
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
   // let proxy = slinger::Proxy::parse("http://127.0.0.1:8080").unwrap();
-  let client = ClientBuilder::new().build().unwrap();
+  let client = ClientBuilder::default().build().unwrap();
   let mut raw = Vec::new();
   // replace \n to \r\n
   for line in RAW.lines() {

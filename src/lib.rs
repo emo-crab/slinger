@@ -81,7 +81,7 @@
 //! async fn run() -> std::result::Result<(), Box<dyn std::error::Error>> {
 //!   let proxy = slinger::Proxy::parse("http://user:pass@127.0.0.1:1080").unwrap();
 //!   // let proxy = slinger::Proxy::parse("socks5://user:pass@127.0.0.1:1080").unwrap();
-//!   let client = slinger::ClientBuilder::new().proxy(proxy).build().unwrap();
+//!   let client = slinger::ClientBuilder::default().proxy(proxy).build().unwrap();
 //!   let resp = client.get("https://httpbin.org/get").send().await?;
 //!   println!("{:?}", resp);
 //!   Ok(())
@@ -106,9 +106,41 @@
 //!
 //! - **charset**: Improved support for decoding text.
 //! - **cookie**: Provides cookie session support.
-//! - **tls**: Provides https support via rustls.
+//! - **tls**: Base TLS feature flag. Enables TLS types and interfaces without a specific backend.
+//! - **rustls**: Provides HTTPS support via rustls (requires `tls` feature).
 //! - **serde**: Provides serialization and deserialization support.
 //! - **gzip**: Provides response body gzip decompression.
+//! - **http2**: Provides HTTP/2 support (requires a TLS backend).
+//!
+//! ### TLS Backend Selection
+//!
+//! When the `tls` feature is enabled, you can choose a TLS backend:
+//! - Enable `rustls` for pure Rust TLS implementation
+//! - Or provide a custom TLS connector by implementing the `CustomTlsConnector` trait
+//!
+//! ### Custom TLS Backend
+//!
+//! If you enable only the `tls` feature without a backend, you can implement your own
+//! TLS handshake logic using any TLS library (OpenSSL, BoringSSL, native-tls, etc.):
+//!
+//! ```ignore
+//! use slinger::{ConnectorBuilder, CustomTlsConnector};
+//!
+//! struct MyTlsConnector;
+//!
+//! impl CustomTlsConnector for MyTlsConnector {
+//!     fn connect<'a>(&'a self, stream: Socket, domain: &'a str)
+//!         -> Pin<Box<dyn Future<Output = Result<Socket>> + Send + 'a>>
+//!     {
+//!         // Your TLS implementation here
+//!         todo!()
+//!     }
+//! }
+//!
+//! let connector = ConnectorBuilder::default()
+//!     .custom_tls_connector(Arc::new(MyTlsConnector))
+//!     .build()?;
+//! ```
 //!
 mod body;
 mod client;
@@ -136,6 +168,8 @@ pub use tls::Certificate;
 pub use body::Body;
 use bytes::Bytes;
 pub use client::{Client, ClientBuilder};
+#[cfg(all(feature = "tls", not(feature = "rustls")))]
+pub use connector::CustomTlsConnector;
 pub use connector::{Connector, ConnectorBuilder};
 pub use errors::{Error, Result};
 pub use http;
@@ -148,7 +182,13 @@ pub use http_serde;
 pub use proxy::Proxy;
 pub use request::{RawRequest, Request, RequestBuilder};
 pub use response::{Response, ResponseBuilder, ResponseConfig};
+#[cfg(all(feature = "tls", not(feature = "rustls")))]
+pub use socket::CustomTlsStream;
+#[cfg(all(feature = "tls", not(feature = "rustls")))]
+pub use socket::MaybeTlsStream;
 pub use socket::Socket;
+#[cfg(feature = "tls")]
+pub use tls::PeerCertificate;
 
 /// Shortcut method to quickly make a `GET` request.
 ///
