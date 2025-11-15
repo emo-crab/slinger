@@ -6,7 +6,6 @@ members = [
 ]
 
 [workspace.package]
-version = "0.2.9"
 edition = "2021"
 authors = ["Kali-Team <root@kali-team.cn>"]
 license = "GPL-3.0-only"

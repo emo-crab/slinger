@@ -1,6 +1,6 @@
 [package]
 name = "slinger"
-version.workspace = true
+version = "0.2.10"
 edition.workspace = true
 description = "An HTTP Client for Rust designed for hackers."
 homepage.workspace = true

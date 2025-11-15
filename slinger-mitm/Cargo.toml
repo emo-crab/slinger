@@ -1,6 +1,6 @@
 [package]
 name = "slinger-mitm"
-version.workspace = true
+version = "0.0.1"
 edition.workspace = true
 description = "MITM proxy with transparent traffic interception using rustls backend for slinger"
 homepage.workspace = true
