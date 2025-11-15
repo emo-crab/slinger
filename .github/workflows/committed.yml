@@ -6,6 +6,7 @@ on: [pull_request]
 jobs:
   committed:
     name: Lint Commits
+    if: startsWith(github.repository, 'emo-crab/') && github.actor != 'dependabot[bot]'
     runs-on: ubuntu-latest
     steps:
     - name: Checkout Actions Repository

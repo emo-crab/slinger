@@ -6,26 +6,18 @@ on:
       - '!/*.md'
       - '!/docs/**'
       - "!/LICENSE-*"
-  push:
-    branches:
-      - main
-    paths:
-      - '**'
-      - '!/*.md'
-      - '!/docs/**'
-      - "!/LICENSE-*"
 jobs:
   ci:
     name: CI
+    if: startsWith(github.repository, 'emo-crab/') && github.actor != 'dependabot[bot]'
     needs: [ test,rustfmt,clippy ]
-    if: github.actor != 'dependabot[bot]'
     runs-on: ubuntu-latest
     steps:
       - name: Done
         run: exit 0
   test:
     name: Test
-    if: github.actor != 'dependabot[bot]'
+    if: startsWith(github.repository, 'emo-crab/') && github.actor != 'dependabot[bot]'
     strategy:
       matrix:
         os: [ "ubuntu-latest", "windows-latest", "macos-latest" ]
@@ -48,7 +40,7 @@ jobs:
         run: cargo test --workspace
   rustfmt:
     name: rustfmt
-    if: github.actor != 'dependabot[bot]'
+    if: startsWith(github.repository, 'emo-crab/') && github.actor != 'dependabot[bot]'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -67,7 +59,7 @@ jobs:
         run: cargo fmt --all -- --check
   clippy:
     name: clippy
-    if: github.actor != 'dependabot[bot]'
+    if: startsWith(github.repository, 'emo-crab/') && github.actor != 'dependabot[bot]'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository

@@ -1,89 +1,62 @@
 //! Example demonstrating how to use a custom TLS connector
 //!
 //! This example shows how to implement your own TLS handshake logic
-//! when the `tls` feature is enabled without a specific backend.
+//! when the `tls` feature is enabled.
 //!
 //! To run this example, compile with:
 //! ```bash
 //! cargo run --example custom_tls --features tls
 //! ```
 //!
-//! Note: This example requires the `tls` feature without `rustls`.
-//! It demonstrates the API with a mock TLS implementation for educational purposes.
+//! Note: This example demonstrates the API with a mock TLS implementation for educational purposes.
 
-#[cfg(all(feature = "tls", not(feature = "rustls")))]
-use slinger::{
-  ConnectorBuilder, CustomTlsConnector, CustomTlsStream, MaybeTlsStream, PeerCertificate, Result,
-  Socket,
-};
-#[cfg(all(feature = "tls", not(feature = "rustls")))]
+use slinger::tls::CustomTlsStream;
+#[cfg(feature = "tls")]
+use slinger::tls::{CustomTlsConnector, PeerCertificate};
+#[cfg(feature = "tls")]
+use slinger::{ConnectorBuilder, Result, Socket, StreamWrapper};
 use std::pin::Pin;
-#[cfg(all(feature = "tls", not(feature = "rustls")))]
+#[cfg(feature = "tls")]
 use std::sync::Arc;
-#[cfg(all(feature = "tls", not(feature = "rustls")))]
 use std::task::{Context, Poll};
-#[cfg(all(feature = "tls", not(feature = "rustls")))]
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
-#[cfg(all(feature = "tls", not(feature = "rustls")))]
-use tokio::net::TcpStream;
 
-#[cfg(all(feature = "tls", not(feature = "rustls")))]
+#[cfg(feature = "tls")]
 /// Mock TLS stream for demonstration purposes
 ///
 /// In a real implementation, this would wrap an actual TLS stream from
 /// a library like OpenSSL, BoringSSL, or another TLS implementation.
-#[derive(Debug)]
 struct MockTlsStream {
-  inner: TcpStream,
-  // In a real implementation, you would store TLS session state here
-  mock_certificate: Vec<u8>,
+  inner: tokio::net::TcpStream,
 }
-
-#[cfg(all(feature = "tls", not(feature = "rustls")))]
-impl MockTlsStream {
-  fn new(stream: TcpStream) -> Self {
-    // Create a mock certificate for demonstration
-    let mock_certificate = b"This is a mock certificate".to_vec();
-    Self {
-      inner: stream,
-      mock_certificate,
-    }
-  }
-}
-
-#[cfg(all(feature = "tls", not(feature = "rustls")))]
+#[cfg(feature = "tls")]
 impl CustomTlsStream for MockTlsStream {
-  fn peer_certificate(&self) -> Option<PeerCertificate> {
-    // Return the mock certificate
-    // In a real implementation, this would extract the actual peer certificate
-    Some(PeerCertificate {
-      inner: self.mock_certificate.clone(),
-    })
+  fn peer_certificate(&self) -> Option<Vec<PeerCertificate>> {
+    None
+  }
+
+  fn alpn_protocol(&self) -> Option<Vec<u8>> {
+    None
   }
 }
-
-#[cfg(all(feature = "tls", not(feature = "rustls")))]
+#[cfg(feature = "tls")]
 impl AsyncRead for MockTlsStream {
   fn poll_read(
     mut self: Pin<&mut Self>,
     cx: &mut Context<'_>,
     buf: &mut ReadBuf<'_>,
   ) -> Poll<std::io::Result<()>> {
-    // In a real implementation, this would read encrypted data,
-    // decrypt it, and place it in the buffer
     Pin::new(&mut self.inner).poll_read(cx, buf)
   }
 }
 
-#[cfg(all(feature = "tls", not(feature = "rustls")))]
+#[cfg(feature = "tls")]
 impl AsyncWrite for MockTlsStream {
   fn poll_write(
     mut self: Pin<&mut Self>,
     cx: &mut Context<'_>,
     buf: &[u8],
   ) -> Poll<std::result::Result<usize, std::io::Error>> {
-    // In a real implementation, this would encrypt the data
-    // before writing it to the underlying stream
     Pin::new(&mut self.inner).poll_write(cx, buf)
   }
 
@@ -102,7 +75,7 @@ impl AsyncWrite for MockTlsStream {
   }
 }
 
-#[cfg(all(feature = "tls", not(feature = "rustls")))]
+#[cfg(feature = "tls")]
 /// Example custom TLS connector implementation
 ///
 /// In a real implementation, you would:
@@ -111,8 +84,7 @@ impl AsyncWrite for MockTlsStream {
 /// 3. Wrap the resulting TLS stream in a type that implements CustomTlsStream
 /// 4. Return it wrapped in a Socket
 struct MyCustomTlsConnector;
-
-#[cfg(all(feature = "tls", not(feature = "rustls")))]
+#[cfg(feature = "tls")]
 impl CustomTlsConnector for MyCustomTlsConnector {
   fn connect<'a>(
     &'a self,
@@ -124,7 +96,7 @@ impl CustomTlsConnector for MyCustomTlsConnector {
 
       // Extract the TCP stream from the socket
       let tcp_stream = match stream.inner {
-        MaybeTlsStream::Tcp(tcp) => tcp,
+        StreamWrapper::Tcp(tcp) => tcp,
         _ => {
           return Err(slinger::Error::Other(
             "Expected plain TCP stream for TLS upgrade".to_string(),
@@ -138,13 +110,14 @@ impl CustomTlsConnector for MyCustomTlsConnector {
       // 3. Establish encrypted communication
 
       // Create our mock TLS stream
-      let tls_stream = MockTlsStream::new(tcp_stream);
+      let mock = MockTlsStream { inner: tcp_stream };
+      // let tls_stream = TlsStreamWrapper::new(mock);
 
       println!("✓ Mock TLS handshake completed successfully");
 
       // Wrap in a Socket and return
       Ok(Socket::new(
-        MaybeTlsStream::Custom(Box::new(tls_stream)),
+        StreamWrapper::Custom(Box::new(mock)),
         stream.read_timeout,
         stream.write_timeout,
       ))
@@ -152,7 +125,7 @@ impl CustomTlsConnector for MyCustomTlsConnector {
   }
 }
 
-#[cfg(all(feature = "tls", not(feature = "rustls")))]
+#[cfg(feature = "tls")]
 #[tokio::main]
 async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
   println!("Custom TLS Connector Example");
@@ -191,8 +164,8 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
   Ok(())
 }
 
-#[cfg(not(all(feature = "tls", not(feature = "rustls"))))]
+#[cfg(not(feature = "tls"))]
 fn main() {
-  eprintln!("This example requires the 'tls' feature without 'rustls'.");
+  eprintln!("This example requires the 'tls' feature.");
   eprintln!("Run with: cargo run --example custom_tls --features tls");
 }

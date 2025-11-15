@@ -5,7 +5,7 @@
 *** that would make this better, please fork the repo and create a pull request
 *** or simply open an issue with the tag "enhancement".
 *** Don't forget to give the project a star!
-*** Thanks again! Now go create something AMAZING! :D
+*** Thanks again! Now go create something AMAZING!
 -->
 
 
@@ -57,11 +57,27 @@
 
 ![Product Name Screen Shot][product-screenshot]
 
+**Slinger** is a workspace containing:
+
+### slinger
+The core HTTP client library for Rust designed for hackers.
+
 - customizable redirect policy
 - http/https and socks5/socks5h proxies
 - cookie store
 - raw socket request
 - HTTPS via tls
+
+### slinger-mitm  
+A Man-in-the-Middle (MITM) proxy with transparent HTTPS traffic interception, similar to Burp Suite.
+
+- Automatic CA certificate generation with improved certificate management (inspired by [hudsucker](https://github.com/omjadas/hudsucker))
+- Certificate caching for high performance
+- Transparent HTTPS interception using rustls backend
+- Traffic interception and modification interfaces
+- Random serial numbers and clock skew handling
+- Reuses slinger's Socket implementation
+- Minimal external dependencies
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -71,11 +87,13 @@
 
 ## Getting Started
 
+### Using slinger (HTTP Client)
+
 This example enables some optional features, so your `Cargo.toml` could look like this:
 
 ```toml
 [dependencies]
-slinger = { version = "0.2.2", features = ["serde", "cookie", "charset", "tls", "rustls", "gzip"] }
+slinger = { version = "0.2.9", features = ["serde", "cookie", "charset", "tls", "rustls", "gzip"] }
 ```
 
 And then the code:
@@ -88,6 +106,40 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
   Ok(())
 }
 ```
+
+### Using slinger-mitm (MITM Proxy)
+
+Add to your `Cargo.toml`:
+
+```toml
+[dependencies]
+slinger-mitm = { version = "0.2.9" }
+tokio = { version = "1", features = ["full"] }
+```
+
+Example code:
+
+```rust,no_run
+use slinger_mitm::{MitmConfig, MitmProxy, Interceptor};
+use std::sync::Arc;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let config = MitmConfig::default();
+    let proxy = MitmProxy::new(config).await?;
+    
+    // Add logging interceptor
+    let handler = proxy.interceptor_handler();
+    let mut h = handler.write().await;
+    h.add_request_interceptor(Arc::new(Interceptor::logging()));
+    drop(h);
+    
+    proxy.start("127.0.0.1:8080").await?;
+    Ok(())
+}
+```
+
+See [slinger-mitm/README.md](slinger-mitm/README.md) for more details on MITM proxy usage.
 
 <!-- FEATURES -->
 

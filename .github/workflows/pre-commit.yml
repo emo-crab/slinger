@@ -1,10 +1,10 @@
 name: pre-commit
 on:
   pull_request:
-  push:
     branches: [main]
 jobs:
   pre-commit:
+    if: startsWith(github.repository, 'emo-crab/') && github.actor != 'dependabot[bot]'
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v2

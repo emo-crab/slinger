@@ -4,14 +4,11 @@ on:
     paths:
       - '**/Cargo.toml'
       - '**/Cargo.lock'
-  push:
-    paths:
-      - '**/Cargo.toml'
-      - '**/Cargo.lock'
   schedule:
   - cron: '3 3 3 * *'
 jobs:
   security_audit:
+    if: startsWith(github.repository, 'emo-crab/') && github.actor != 'dependabot[bot]'
     runs-on: ubuntu-latest
     steps:
     - name: Checkout repository

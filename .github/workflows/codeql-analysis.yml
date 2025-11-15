@@ -12,8 +12,6 @@
 name: "CodeQL"
 
 on:
-  push:
-    branches: [ "main" ]
   pull_request:
     # The branches below must be a subset of the branches above
     branches: [ "main" ]
@@ -23,6 +21,7 @@ on:
 jobs:
   analyze:
     name: Analyze
+    if: startsWith(github.repository, 'emo-crab/') && github.actor != 'dependabot[bot]'
     runs-on: ubuntu-latest
     permissions:
       actions: read

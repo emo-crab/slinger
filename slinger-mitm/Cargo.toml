@@ -1,0 +1,34 @@
+[package]
+name = "slinger-mitm"
+version = "0.0.1"
+edition.workspace = true
+description = "MITM proxy with transparent traffic interception using rustls backend for slinger"
+homepage.workspace = true
+repository.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+# Core slinger library
+slinger = { path = "../slinger", features = ["tls", "rustls", "http2"] }
+# Workspace dependencies
+thiserror.workspace = true
+http.workspace = true
+bytes.workspace = true
+tracing.workspace = true
+tokio = { workspace = true, features = ["net", "io-util", "rt", "sync", "fs", "macros"] }
+tokio-rustls = { workspace = true }
+rustls-pemfile.workspace = true
+
+# MITM-specific dependencies
+rcgen = { version = "0.14", features = ["x509-parser"] }
+time = "0.3"
+async-trait = "0.1"
+moka = { version = "0.12", features = ["future"] }
+rand = "0.8"
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "test-util"] }
+
+[features]
+default = []

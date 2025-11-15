@@ -1,97 +1,63 @@
 //! Example demonstrating how to implement native-tls support as a custom TLS connector
 //!
 //! This example shows how users can implement their own native-tls integration
-//! when the built-in native-tls feature has been removed from the main library.
+//! using the unified CustomTlsConnector interface.
 //!
 //! To run this example:
 //! ```bash
 //! cargo run --example native_tls_example --features tls
 //! ```
 //!
-//! Note: This example requires the `tls` feature without `rustls`.
+//! Note: This example requires the `tls` feature.
 //! The native-tls dependencies are available in dev-dependencies for examples.
 
-#[cfg(all(feature = "tls", not(feature = "rustls")))]
-use slinger::{
-  ConnectorBuilder, CustomTlsConnector, CustomTlsStream, MaybeTlsStream, PeerCertificate, Result,
-  Socket,
-};
-#[cfg(all(feature = "tls", not(feature = "rustls")))]
-use std::pin::Pin;
-#[cfg(all(feature = "tls", not(feature = "rustls")))]
+#[cfg(feature = "tls")]
+use slinger::tls::{CustomTlsConnector, CustomTlsStream, PeerCertificate};
+#[cfg(feature = "tls")]
+use slinger::{ConnectorBuilder, Result, Socket, StreamWrapper};
+#[cfg(feature = "tls")]
 use std::sync::Arc;
-#[cfg(all(feature = "tls", not(feature = "rustls")))]
-use std::task::{Context, Poll};
-#[cfg(all(feature = "tls", not(feature = "rustls")))]
-use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
-#[cfg(all(feature = "tls", not(feature = "rustls")))]
+#[cfg(feature = "tls")]
 use tokio::net::TcpStream;
 
-#[cfg(all(feature = "tls", not(feature = "rustls")))]
+#[cfg(feature = "tls")]
 /// Wrapper for tokio-native-tls TlsStream that implements CustomTlsStream
-#[derive(Debug)]
+/// Uses TlsStreamWrapper to automatically implement AsyncRead and AsyncWrite
 struct NativeTlsStream {
   inner: tokio_native_tls::TlsStream<TcpStream>,
 }
 
-#[cfg(all(feature = "tls", not(feature = "rustls")))]
+#[cfg(feature = "tls")]
 impl NativeTlsStream {
   fn new(stream: tokio_native_tls::TlsStream<TcpStream>) -> Self {
     Self { inner: stream }
   }
 }
 
-#[cfg(all(feature = "tls", not(feature = "rustls")))]
+#[cfg(feature = "tls")]
+// Use the macro to implement AsyncRead and AsyncWrite by delegating to the inner TlsStreamWrapper
+slinger::impl_tls_stream!(NativeTlsStream, inner);
+
+#[cfg(feature = "tls")]
 impl CustomTlsStream for NativeTlsStream {
-  fn peer_certificate(&self) -> Option<PeerCertificate> {
-    self
+  fn peer_certificate(&self) -> Option<Vec<PeerCertificate>> {
+    let cert = self
       .inner
       .get_ref()
       .peer_certificate()
-      .ok()
-      .flatten()
-      .and_then(|cert| cert.to_der().ok())
-      .map(|der| PeerCertificate { inner: der })
+      .ok()??
+      .to_der()
+      .ok()?;
+
+    Some(vec![PeerCertificate { inner: cert }])
+  }
+
+  fn alpn_protocol(&self) -> Option<Vec<u8>> {
+    None
   }
 }
 
-#[cfg(all(feature = "tls", not(feature = "rustls")))]
-impl AsyncRead for NativeTlsStream {
-  fn poll_read(
-    mut self: Pin<&mut Self>,
-    cx: &mut Context<'_>,
-    buf: &mut ReadBuf<'_>,
-  ) -> Poll<std::io::Result<()>> {
-    Pin::new(&mut self.inner).poll_read(cx, buf)
-  }
-}
-
-#[cfg(all(feature = "tls", not(feature = "rustls")))]
-impl AsyncWrite for NativeTlsStream {
-  fn poll_write(
-    mut self: Pin<&mut Self>,
-    cx: &mut Context<'_>,
-    buf: &[u8],
-  ) -> Poll<std::result::Result<usize, std::io::Error>> {
-    Pin::new(&mut self.inner).poll_write(cx, buf)
-  }
-
-  fn poll_flush(
-    mut self: Pin<&mut Self>,
-    cx: &mut Context<'_>,
-  ) -> Poll<std::result::Result<(), std::io::Error>> {
-    Pin::new(&mut self.inner).poll_flush(cx)
-  }
-
-  fn poll_shutdown(
-    mut self: Pin<&mut Self>,
-    cx: &mut Context<'_>,
-  ) -> Poll<std::result::Result<(), std::io::Error>> {
-    Pin::new(&mut self.inner).poll_shutdown(cx)
-  }
-}
-
-#[cfg(all(feature = "tls", not(feature = "rustls")))]
+#[cfg(feature = "tls")]
 /// Native-TLS connector implementation
 ///
 /// This demonstrates how to wrap tokio-native-tls to work with slinger's
@@ -100,7 +66,7 @@ struct NativeTlsConnector {
   connector: tokio_native_tls::TlsConnector,
 }
 
-#[cfg(all(feature = "tls", not(feature = "rustls")))]
+#[cfg(feature = "tls")]
 impl NativeTlsConnector {
   fn new() -> std::result::Result<Self, Box<dyn std::error::Error>> {
     let mut builder = tokio_native_tls::native_tls::TlsConnector::builder();
@@ -125,7 +91,7 @@ impl NativeTlsConnector {
   }
 }
 
-#[cfg(all(feature = "tls", not(feature = "rustls")))]
+#[cfg(feature = "tls")]
 impl CustomTlsConnector for NativeTlsConnector {
   fn connect<'a>(
     &'a self,
@@ -138,7 +104,7 @@ impl CustomTlsConnector for NativeTlsConnector {
     Box::pin(async move {
       // Extract the TCP stream from the socket
       let tcp_stream = match stream.inner {
-        MaybeTlsStream::Tcp(tcp) => tcp,
+        StreamWrapper::Tcp(tcp) => tcp,
         _ => {
           return Err(slinger::Error::Other(
             "Expected plain TCP stream for TLS upgrade".to_string(),
@@ -152,12 +118,12 @@ impl CustomTlsConnector for NativeTlsConnector {
         .await
         .map_err(|e| slinger::Error::Other(format!("native-tls handshake failed: {}", e)))?;
 
-      // Wrap in our custom stream type
+      // Wrap in NativeTlsStream which uses TlsStreamWrapper internally
       let custom_stream = NativeTlsStream::new(tls_stream);
 
       // Create a new socket with the TLS stream
       Ok(Socket::new(
-        MaybeTlsStream::Custom(Box::new(custom_stream)),
+        StreamWrapper::Custom(Box::new(custom_stream)),
         stream.read_timeout,
         stream.write_timeout,
       ))
@@ -165,7 +131,7 @@ impl CustomTlsConnector for NativeTlsConnector {
   }
 }
 
-#[cfg(all(feature = "tls", not(feature = "rustls")))]
+#[cfg(feature = "tls")]
 #[tokio::main]
 async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
   println!("Native-TLS Custom Connector Example");
@@ -192,7 +158,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
 
   // Try to get peer certificate
   if let Some(cert) = socket.inner.peer_certificate() {
-    println!("✓ Retrieved peer certificate ({} bytes)", cert.len());
+    println!("✓ Retrieved peer certificate ({})", cert.len());
   } else {
     println!("✗ No peer certificate available");
   }
@@ -200,21 +166,23 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
   println!("\nThis example demonstrates:");
   println!("1. Creating a custom TLS connector using native-tls");
   println!("2. Implementing the CustomTlsConnector trait");
-  println!("3. Implementing the CustomTlsStream trait for the TLS stream wrapper");
-  println!("4. Using ConnectorBuilder to configure the connector");
-  println!("5. Getting peer certificate information from the TLS connection");
+  println!("3. Using impl_tls_stream! macro to avoid AsyncRead/AsyncWrite boilerplate");
+  println!("4. Implementing only the CustomTlsStream trait for custom logic");
+  println!("5. Using ConnectorBuilder to configure the connector");
+  println!("6. Getting peer certificate information from the TLS connection");
 
   println!("\nKey implementation details:");
-  println!("  - NativeTlsStream wraps tokio_native_tls::TlsStream");
-  println!("  - Implements CustomTlsStream with AsyncRead/AsyncWrite");
-  println!("  - Provides peer_certificate() to extract certificate info");
-  println!("  - Provides get_ref() to access underlying TcpStream");
+  println!("  - NativeTlsStream wraps TlsStreamWrapper<tokio_native_tls::TlsStream>");
+  println!("  - impl_tls_stream! macro generates AsyncRead/AsyncWrite delegations");
+  println!("  - No manual AsyncRead/AsyncWrite implementation needed");
+  println!("  - Only CustomTlsStream trait needs custom implementation");
+  println!("  - Clean and minimal code pattern");
 
   Ok(())
 }
 
-#[cfg(not(all(feature = "tls", not(feature = "rustls"))))]
+#[cfg(not(feature = "tls"))]
 fn main() {
-  eprintln!("This example requires the 'tls' feature without 'rustls'.");
+  eprintln!("This example requires the 'tls' feature.");
   eprintln!("Run with: cargo run --example native_tls_example --features tls");
 }

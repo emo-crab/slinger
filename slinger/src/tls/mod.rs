@@ -1,22 +1,125 @@
 //! TLS configuration and types
 //!
 #[cfg(feature = "rustls")]
-use std::io::{BufRead, BufReader};
+pub mod rustls;
 use std::ops::Deref;
+use tokio::io::{AsyncRead, AsyncWrite};
+use crate::Socket;
 #[cfg(feature = "rustls")]
-use tokio_rustls::rustls;
-#[cfg(feature = "rustls")]
-use tokio_rustls::rustls::crypto::WebPkiSupportedAlgorithms;
-#[cfg(feature = "rustls")]
-use tokio_rustls::rustls::pki_types::{ServerName, UnixTime};
-#[cfg(feature = "rustls")]
-use tokio_rustls::rustls::server::ParsedCertificate;
-#[cfg(feature = "rustls")]
-use tokio_rustls::rustls::{
-  client::danger::HandshakeSignatureValid, client::danger::ServerCertVerified,
-  client::danger::ServerCertVerifier, DigitallySignedStruct, Error as TLSError, RootCertStore,
-  SignatureScheme,
-};
+use std::io::{BufRead, BufReader};
+/// Trait for custom TLS connector implementations.
+///
+/// This trait allows users to implement their own TLS handshake logic when the `tls` feature
+/// is enabled. Both rustls and custom TLS implementations use this unified interface.
+///
+/// # Example
+///
+/// ```ignore
+/// use slinger::connector::CustomTlsConnector;
+/// use slinger::Socket;
+/// use tokio::net::TcpStream;
+///
+/// struct MyTlsConnector;
+///
+/// impl CustomTlsConnector for MyTlsConnector {
+///     fn connect<'a>(
+///         &'a self,
+///         domain: &'a str,
+///         stream: Socket,
+///     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Socket>> + Send + 'a>> {
+///         Box::pin(async move {
+///             // Implement your custom TLS handshake here
+///             // You can use openssl, boringssl, or any other TLS library
+///             todo!("Implement custom TLS handshake")
+///         })
+///     }
+/// }
+/// ```
+pub trait CustomTlsConnector: Send + Sync + 'static {
+  /// Perform TLS handshake on the given TCP stream.
+  ///
+  /// # Arguments
+  ///
+  /// * `domain` - The domain name for SNI (Server Name Indication)
+  /// * `stream` - The TCP socket to upgrade to TLS
+  ///
+  /// # Returns
+  ///
+  /// Returns a `Socket` wrapping the TLS stream on success.
+  fn connect<'a>(
+    &'a self,
+    domain: &'a str,
+    stream: Socket,
+  ) -> std::pin::Pin<Box<dyn std::future::Future<Output =crate::Result<Socket>> + Send + 'a>>;
+}
+
+/// Macro to implement AsyncRead and AsyncWrite by delegating to an inner TlsStreamWrapper field
+///
+/// This macro reduces boilerplate when creating custom TLS stream wrappers.
+/// It generates AsyncRead and AsyncWrite implementations that delegate to a field
+/// containing a TlsStreamWrapper.
+///
+/// # Usage
+///
+/// ```ignore
+/// struct MyTlsStream {
+///   inner: TlsStreamWrapper<SomeTlsStream>,
+/// }
+///
+/// slinger::impl_tls_stream!(MyTlsStream, inner);
+/// ```
+///
+/// The first argument is the type name, and the second is the field name containing
+/// the TlsStreamWrapper.
+#[macro_export]
+macro_rules! impl_tls_stream {
+  ($type:ty, $field:ident) => {
+    impl tokio::io::AsyncRead for $type {
+      fn poll_read(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+      ) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut self.$field).poll_read(cx, buf)
+      }
+    }
+
+    impl tokio::io::AsyncWrite for $type {
+      fn poll_write(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+      ) -> std::task::Poll<std::io::Result<usize>> {
+        std::pin::Pin::new(&mut self.$field).poll_write(cx, buf)
+      }
+
+      fn poll_flush(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+      ) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut self.$field).poll_flush(cx)
+      }
+
+      fn poll_shutdown(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+      ) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut self.$field).poll_shutdown(cx)
+      }
+    }
+  };
+}
+/// Trait for custom TLS stream implementations
+pub trait CustomTlsStream: AsyncRead + AsyncWrite + Send + Sync + Unpin + 'static {
+  /// Get the peer certificate from the TLS connection, if available
+  fn peer_certificate(&self) -> Option<Vec<PeerCertificate>> {
+    None
+  }
+  /// Get the alpn_protocol
+  fn alpn_protocol(&self) -> Option<Vec<u8>> {
+    None
+  }
+}
 /// peer certificate
 #[derive(Clone, Debug)]
 pub struct PeerCertificate {
@@ -34,17 +137,45 @@ impl Deref for PeerCertificate {
 /// Represents a server X509 certificate.
 #[derive(Clone, Debug)]
 pub struct Certificate {
-  #[cfg_attr(not(feature = "rustls"), allow(dead_code))]
   original: Cert,
 }
+/// Cert
 #[derive(Clone, Debug)]
-enum Cert {
-  #[cfg_attr(not(feature = "rustls"), allow(dead_code))]
+pub enum Cert {
+  /// Der
   Der(Vec<u8>),
-  #[cfg_attr(not(feature = "rustls"), allow(dead_code))]
+  /// Pem
   Pem(Vec<u8>),
 }
+impl Cert {
+  /// Returns the DER-encoded bytes if this is a DER certificate.
+  pub fn as_der(&self) -> Option<&[u8]> {
+    match self {
+      Cert::Der(data) => Some(data),
+      Cert::Pem(_) => None,
+    }
+  }
+
+  /// Returns the PEM-encoded bytes if this is a PEM certificate.
+  pub fn as_pem(&self) -> Option<&[u8]> {
+    match self {
+      Cert::Pem(data) => Some(data),
+      Cert::Der(_) => None,
+    }
+  }
+
+  /// Returns the raw bytes regardless of format.
+  pub fn to_bytes(&self) -> Vec<u8> {
+    match self {
+      Cert::Der(data) | Cert::Pem(data) => data.clone(),
+    }
+  }
+}
 impl Certificate {
+  /// Returns the inner certificate representation.
+  pub fn original(&self) -> &Cert {
+    &self.original
+  }
   /// Create a `Certificate` from a binary DER encoded certificate
   ///
   /// # Examples
@@ -56,7 +187,7 @@ impl Certificate {
   /// let mut buf = Vec::new();
   /// File::open("my_cert.der")?
   ///     .read_to_end(&mut buf)?;
-  /// let cert = slinger::Certificate::from_der(&buf)?;
+  /// let cert = slinger::tls::Certificate::from_der(&buf)?;
   /// # drop(cert);
   /// # Ok(())
   /// # }
@@ -78,7 +209,7 @@ impl Certificate {
   /// let mut buf = Vec::new();
   /// File::open("my_cert.pem")?
   ///     .read_to_end(&mut buf)?;
-  /// let cert = slinger::Certificate::from_pem(&buf)?;
+  /// let cert = slinger::tls::Certificate::from_pem(&buf)?;
   /// # drop(cert);
   /// # Ok(())
   /// # }
@@ -101,7 +232,7 @@ impl Certificate {
   /// let mut buf = Vec::new();
   /// File::open("ca-bundle.crt")?
   ///     .read_to_end(&mut buf)?;
-  /// let certs = slinger::Certificate::from_pem_bundle(&buf)?;
+  /// let certs = slinger::tls::Certificate::from_pem_bundle(&buf)?;
   /// # drop(certs);
   /// # Ok(())
   /// # }
@@ -123,13 +254,13 @@ impl Certificate {
   }
 
   #[cfg(feature = "rustls")]
-  pub(crate) fn add_to_tls(self, root_cert_store: &mut RootCertStore) -> crate::Result<()> {
-    use std::io::Cursor;
+  pub(crate) fn add_to_tls(self, root_cert_store: &mut tokio_rustls::rustls::RootCertStore) -> crate::Result<()> {
     match self.original {
       Cert::Der(buf) => root_cert_store
         .add(buf.into())
         .map_err(crate::errors::builder)?,
       Cert::Pem(buf) => {
+        use std::io::Cursor;
         let mut reader = Cursor::new(buf);
         let certs = Self::read_pem_certs(&mut reader)?;
         for c in certs {
@@ -152,10 +283,10 @@ impl Certificate {
       .collect()
   }
 }
+#[allow(dead_code)]
 /// Represents a private key and X509 cert as a client certificate.
 #[derive(Clone)]
 pub struct Identity {
-  #[cfg_attr(not(feature = "rustls"), allow(dead_code))]
   inner: ClientCert,
 }
 enum ClientCert {
@@ -214,12 +345,10 @@ impl Identity {
     {
       use rustls_pemfile::Item;
       use std::io::Cursor;
-
       let (key, certs) = {
         let mut pem = Cursor::new(buf);
         let mut sk = Vec::<rustls_pki_types::PrivateKeyDer>::new();
         let mut certs = Vec::<rustls_pki_types::CertificateDer>::new();
-
         for result in rustls_pemfile::read_all(&mut pem) {
           match result {
             Ok(Item::X509Certificate(cert)) => certs.push(cert),
@@ -227,27 +356,25 @@ impl Identity {
             Ok(Item::Pkcs8Key(key)) => sk.push(key.into()),
             Ok(Item::Sec1Key(key)) => sk.push(key.into()),
             Ok(_) => {
-              return Err(crate::errors::builder(TLSError::General(String::from(
+              return Err(crate::errors::builder(tokio_rustls::rustls::Error::General(String::from(
                 "No valid certificate was found",
               ))))
             }
             Err(_) => {
-              return Err(crate::errors::builder(TLSError::General(String::from(
+              return Err(crate::errors::builder(tokio_rustls::rustls::Error::General(String::from(
                 "Invalid identity PEM file",
               ))))
             }
           }
         }
-
         if let (Some(sk), false) = (sk.pop(), certs.is_empty()) {
           (sk, certs)
         } else {
-          return Err(crate::errors::builder(TLSError::General(String::from(
+          return Err(crate::errors::builder(tokio_rustls::rustls::Error::General(String::from(
             "private key or certificate not found",
           ))));
         }
       };
-
       Ok(Identity {
         inner: ClientCert::RustlsPem { key, certs },
       })
@@ -255,28 +382,23 @@ impl Identity {
     #[cfg(not(feature = "rustls"))]
     {
       // For custom TLS backend, store the PEM data
-      Ok(Identity {
+      return Ok(Identity {
         inner: ClientCert::CustomPem {
           pem_data: buf.to_vec(),
         },
-      })
+      });
     }
   }
 
   #[cfg(feature = "rustls")]
   pub(crate) fn add_to_tls(
     self,
-    config_builder: rustls::ConfigBuilder<rustls::ClientConfig, rustls::client::WantsClientCert>,
-  ) -> crate::Result<rustls::ClientConfig> {
-    match self.inner {
-      ClientCert::RustlsPem { key, certs } => config_builder
-        .with_client_auth_cert(certs, key)
-        .map_err(crate::errors::builder),
-      #[cfg(not(feature = "rustls"))]
-      ClientCert::CustomPem { .. } => Err(crate::errors::builder(
-        "Cannot use custom identity with rustls without proper conversion",
-      )),
-    }
+    config_builder: tokio_rustls::rustls::ConfigBuilder<tokio_rustls::rustls::ClientConfig, tokio_rustls::rustls::client::WantsClientCert>,
+  ) -> crate::Result<tokio_rustls::rustls::ClientConfig> {
+    let ClientCert::RustlsPem { key, certs } = self.inner;
+    config_builder
+      .with_client_auth_cert(certs, key)
+      .map_err(crate::errors::builder)
   }
 }
 /// A TLS protocol version.
@@ -300,133 +422,4 @@ impl Version {
   pub const TLS_1_2: Version = Version(InnerVersion::Tls1_2);
   /// Version 1.3 of the TLS protocol.
   pub const TLS_1_3: Version = Version(InnerVersion::Tls1_3);
-
-  #[cfg(feature = "rustls")]
-  pub(crate) fn from_tls(version: rustls::ProtocolVersion) -> Option<Self> {
-    match version {
-      rustls::ProtocolVersion::SSLv2 => None,
-      rustls::ProtocolVersion::SSLv3 => None,
-      rustls::ProtocolVersion::TLSv1_0 => Some(Self(InnerVersion::Tls1_0)),
-      rustls::ProtocolVersion::TLSv1_1 => Some(Self(InnerVersion::Tls1_1)),
-      rustls::ProtocolVersion::TLSv1_2 => Some(Self(InnerVersion::Tls1_2)),
-      rustls::ProtocolVersion::TLSv1_3 => Some(Self(InnerVersion::Tls1_3)),
-      _ => None,
-    }
-  }
-}
-
-#[cfg(feature = "rustls")]
-#[derive(Debug)]
-pub(crate) struct NoVerifier;
-
-#[cfg(feature = "rustls")]
-impl ServerCertVerifier for NoVerifier {
-  fn verify_server_cert(
-    &self,
-    _end_entity: &rustls_pki_types::CertificateDer,
-    _intermediates: &[rustls_pki_types::CertificateDer],
-    _server_name: &ServerName,
-    _ocsp_response: &[u8],
-    _now: UnixTime,
-  ) -> Result<ServerCertVerified, TLSError> {
-    Ok(ServerCertVerified::assertion())
-  }
-
-  fn verify_tls12_signature(
-    &self,
-    _message: &[u8],
-    _cert: &rustls_pki_types::CertificateDer,
-    _dss: &DigitallySignedStruct,
-  ) -> Result<HandshakeSignatureValid, TLSError> {
-    Ok(HandshakeSignatureValid::assertion())
-  }
-
-  fn verify_tls13_signature(
-    &self,
-    _message: &[u8],
-    _cert: &rustls_pki_types::CertificateDer,
-    _dss: &DigitallySignedStruct,
-  ) -> Result<HandshakeSignatureValid, TLSError> {
-    Ok(HandshakeSignatureValid::assertion())
-  }
-
-  fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
-    vec![
-      SignatureScheme::RSA_PKCS1_SHA1,
-      SignatureScheme::ECDSA_SHA1_Legacy,
-      SignatureScheme::RSA_PKCS1_SHA256,
-      SignatureScheme::ECDSA_NISTP256_SHA256,
-      SignatureScheme::RSA_PKCS1_SHA384,
-      SignatureScheme::ECDSA_NISTP384_SHA384,
-      SignatureScheme::RSA_PKCS1_SHA512,
-      SignatureScheme::ECDSA_NISTP521_SHA512,
-      SignatureScheme::RSA_PSS_SHA256,
-      SignatureScheme::RSA_PSS_SHA384,
-      SignatureScheme::RSA_PSS_SHA512,
-      SignatureScheme::ED25519,
-      SignatureScheme::ED448,
-    ]
-  }
-}
-
-#[cfg(feature = "rustls")]
-#[derive(Debug)]
-pub(crate) struct IgnoreHostname {
-  roots: RootCertStore,
-  signature_algorithms: WebPkiSupportedAlgorithms,
-}
-
-#[cfg(feature = "rustls")]
-impl IgnoreHostname {
-  pub(crate) fn new(roots: RootCertStore, signature_algorithms: WebPkiSupportedAlgorithms) -> Self {
-    Self {
-      roots,
-      signature_algorithms,
-    }
-  }
-}
-
-#[cfg(feature = "rustls")]
-impl ServerCertVerifier for IgnoreHostname {
-  fn verify_server_cert(
-    &self,
-    end_entity: &rustls_pki_types::CertificateDer<'_>,
-    intermediates: &[rustls_pki_types::CertificateDer<'_>],
-    _server_name: &ServerName<'_>,
-    _ocsp_response: &[u8],
-    now: UnixTime,
-  ) -> Result<ServerCertVerified, TLSError> {
-    let cert = ParsedCertificate::try_from(end_entity)?;
-
-    rustls::client::verify_server_cert_signed_by_trust_anchor(
-      &cert,
-      &self.roots,
-      intermediates,
-      now,
-      self.signature_algorithms.all,
-    )?;
-    Ok(ServerCertVerified::assertion())
-  }
-
-  fn verify_tls12_signature(
-    &self,
-    message: &[u8],
-    cert: &rustls_pki_types::CertificateDer<'_>,
-    dss: &DigitallySignedStruct,
-  ) -> Result<HandshakeSignatureValid, TLSError> {
-    rustls::crypto::verify_tls12_signature(message, cert, dss, &self.signature_algorithms)
-  }
-
-  fn verify_tls13_signature(
-    &self,
-    message: &[u8],
-    cert: &rustls_pki_types::CertificateDer<'_>,
-    dss: &DigitallySignedStruct,
-  ) -> Result<HandshakeSignatureValid, TLSError> {
-    rustls::crypto::verify_tls13_signature(message, cert, dss, &self.signature_algorithms)
-  }
-
-  fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
-    self.signature_algorithms.supported_schemes()
-  }
 }
