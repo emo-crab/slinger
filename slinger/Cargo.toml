@@ -1,0 +1,52 @@
+[package]
+name = "slinger"
+version.workspace = true
+edition.workspace = true
+description = "An HTTP Client for Rust designed for hackers."
+homepage.workspace = true
+repository.workspace = true
+authors.workspace = true
+readme = "../README.md"
+license.workspace = true
+
+
+[dependencies]
+thiserror.workspace = true
+http.workspace = true
+socket2.workspace = true
+bytes.workspace = true
+tracing.workspace = true
+base64 = "0.22"
+percent-encoding = "2.1"
+flate2 = { version = "1.0", default-features = false, features = ["default"], optional = true }
+serde = { version = "1", features = ["derive"], optional = true }
+http-serde = { version = "2.1.0", optional = true }
+encoding_rs = { version = "0.8", optional = true }
+mime = { version = "0.3.17", optional = true }
+cookie = { version = "0.18.1", optional = true }
+tokio-rustls = { workspace = true, optional = true }
+tokio = { workspace = true, features = ["net", "io-util", "time", "rt"] }
+rustls-pemfile = { workspace = true, optional = true }
+rustls-pki-types = { workspace = true, optional = true }
+rustls-native-certs = { workspace = true, optional = true }
+h2 = { version = "0.4", optional = true }
+schemars = { version = "1.1.0", optional = true, features = ["bytes1"] }
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+futures = { version = "0.3.31" }
+serde_json = "1"
+tokio-native-tls = "0.3"
+[features]
+default = []
+# TLS feature hierarchy:
+# - `tls`: Base TLS feature flag (enables TLS types and interfaces, but no backend)
+# - `rustls`: Rustls TLS backend (requires `tls`)
+# Note: If `tls` is enabled without a backend, you must provide a custom TLS connector callback.
+tls = []
+rustls = ["tls", "tokio-rustls", "rustls-pemfile", "rustls-pki-types", "rustls-native-certs"]
+http2 = ["dep:h2", "tls"]
+cookie = ["dep:cookie"]
+charset = ["dep:encoding_rs", "dep:mime"]
+serde = ["dep:serde", "http-serde"]
+gzip = ["flate2"]
+schema = ["dep:schemars", "serde"]

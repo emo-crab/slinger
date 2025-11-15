@@ -14,7 +14,9 @@ use crate::redirect::{remove_sensitive_headers, Action, Policy};
 use crate::response::{ResponseBuilder, ResponseConfig};
 use crate::socket::Socket;
 #[cfg(feature = "tls")]
-use crate::tls::{self, Certificate, Identity, PeerCertificate};
+use crate::tls::{
+  self, Certificate, CustomTlsConnector, CustomTlsStream, Identity, PeerCertificate,
+};
 use crate::{Connector, ConnectorBuilder, Request, RequestBuilder, Response};
 use bytes::Bytes;
 use http::{HeaderMap, HeaderValue, Method, StatusCode};
@@ -247,7 +249,7 @@ impl Client {
       // HTTP/1.1 path (existing code)
       let raw: Bytes = request.to_raw();
       #[cfg(feature = "tls")]
-      let mut peer_certificate: Option<PeerCertificate> = None;
+      let mut peer_certificate: Option<Vec<PeerCertificate>> = None;
       #[cfg(feature = "tls")]
       {
         if let Some(pc) = socket.peer_certificate() {
@@ -333,14 +335,14 @@ impl Client {
       }
       record.record_request(&request);
       let key = uniq_key(&cur_uri);
-      let socket = match conn.entry(key) {
+      let socket = match conn.entry(key.clone()) {
         Entry::Occupied(mut entry) => {
           entry.get_mut().take() // take out the Option<Socket>
         }
         Entry::Vacant(entry) => {
           let new_socket = self.inner.connector.connect_with_uri(&cur_uri).await?;
-          entry.insert(None); // placeholder
-          Some(new_socket)
+          let slot = entry.insert(Some(new_socket));
+          slot.take()
         }
       };
       let (mut response, socket) = self.execute_request(socket, &request).await?;
@@ -348,24 +350,24 @@ impl Client {
       if let Some(cv) = response.headers().get(http::header::CONNECTION) {
         match cv.to_str().unwrap_or_default() {
           "keep-alive" => {
-            if let Some(Some(s)) = conn.get_mut(&uniq_key(&cur_uri)) {
+            if let Some(slot) = conn.get_mut(&key) {
               if let Some(socket) = socket {
-                *s = socket;
+                *slot = Some(socket);
               }
             }
             if !self.inner.keepalive {
-              conn.remove(&uniq_key(&cur_uri));
+              conn.remove(&key);
             } else {
               keepalive = true;
             }
           }
           _ => {
-            conn.remove(&uniq_key(&cur_uri));
+            conn.remove(&key);
             keepalive = false;
           }
         }
       } else {
-        conn.remove(&uniq_key(&cur_uri));
+        conn.remove(&key);
         keepalive = false;
       }
       // 原始请求不跳转
@@ -531,12 +533,12 @@ impl ClientBuilder {
   pub fn build(self) -> Result<Client> {
     let config = self.config;
     let connector_builder = if let Some(custom_builder) = config.connector_builder {
-      // Use the custom connector builder directly
       custom_builder
     } else {
       // Build default connector with config values
       let mut default_builder = ConnectorBuilder::default()
         .proxy(config.proxy)
+        .keepalive(config.keepalive)
         .read_timeout(config.read_timeout)
         .connect_timeout(config.connect_timeout)
         .write_timeout(config.timeout);
@@ -552,6 +554,9 @@ impl ClientBuilder {
           .max_tls_version(config.max_tls_version);
         if let Some(identity) = config.identity {
           default_builder = default_builder.identity(identity);
+        }
+        if let Some(tls) = config.tls {
+          default_builder = default_builder.custom_tls_connector(tls)
         }
       }
       #[cfg(feature = "http2")]
@@ -855,6 +860,15 @@ impl ClientBuilder {
     self.config.max_tls_version = version;
     self
   }
+  /// Controls the use of TLS server name indication.
+  ///
+  /// Defaults to `None`.
+  ///
+  #[cfg(feature = "tls")]
+  pub fn tls(mut self, tls: Option<Arc<dyn CustomTlsConnector>>) -> ClientBuilder {
+    self.config.tls = tls;
+    self
+  }
   #[cfg(feature = "http2")]
   /// Enable or disable HTTP/2 support.
   pub fn enable_http2(mut self, http2: bool) -> Self {
@@ -933,6 +947,8 @@ struct Config {
   min_tls_version: Option<tls::Version>,
   #[cfg(feature = "tls")]
   max_tls_version: Option<tls::Version>,
+  #[cfg(feature = "tls")]
+  tls: Option<Arc<dyn CustomTlsConnector>>,
   redirect_policy: Policy,
   #[cfg(feature = "cookie")]
   cookie_store: Option<Arc<dyn cookies::CookieStore + Send + Sync + 'static>>,
@@ -980,6 +996,8 @@ impl Default for Config {
       min_tls_version: None,
       #[cfg(feature = "tls")]
       max_tls_version: None,
+      #[cfg(feature = "tls")]
+      tls: None,
       redirect_policy: Policy::Limit(10),
       #[cfg(feature = "cookie")]
       cookie_store: None,

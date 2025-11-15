@@ -93,35 +93,44 @@
 //! HTTPS destinations.
 //!
 //! - Additional server certificates can be configured on a `ClientBuilder`
-//!   with the [`tls::Certificate`][Certificate] type.
+//!   with the [`tls::Certificate`][tls::Certificate] type.
 //! - Client certificates can be added to a `ClientBuilder` with the
 //!   [`tls::Identity`][tls::Identity] type.
 //! - Various parts of TLS can also be configured or even disabled on the
 //!   `ClientBuilder`.
 //!
+//! ### TLS Backend
+//!
+//! When the `rustls` feature is enabled (recommended), slinger uses rustls as the default
+//! TLS backend through the unified `CustomTlsConnector` interface. This provides a consistent
+//! API regardless of which TLS implementation you use.
+//!
+//! You can also provide your own TLS implementation by implementing the `CustomTlsConnector`
+//! trait and setting it with `ConnectorBuilder::custom_tls_connector()`.
+//!
 //! ## Optional Features
 //!
-//! The following are a list of [Cargo features][cargo-features] that can be
+//! The following are a list of [Cargo features]\[cargo-features\] that can be
 //! enabled or disabled:
 //!
 //! - **charset**: Improved support for decoding text.
 //! - **cookie**: Provides cookie session support.
-//! - **tls**: Base TLS feature flag. Enables TLS types and interfaces without a specific backend.
-//! - **rustls**: Provides HTTPS support via rustls (requires `tls` feature).
+//! - **tls**: Base TLS feature flag. Enables TLS types and interfaces.
+//! - **rustls**: Provides HTTPS support via rustls (requires `tls` feature). This is the recommended TLS backend.
 //! - **serde**: Provides serialization and deserialization support.
 //! - **gzip**: Provides response body gzip decompression.
 //! - **http2**: Provides HTTP/2 support (requires a TLS backend).
 //!
 //! ### TLS Backend Selection
 //!
-//! When the `tls` feature is enabled, you can choose a TLS backend:
-//! - Enable `rustls` for pure Rust TLS implementation
+//! When the `tls` feature is enabled, you have several options:
+//! - Enable `rustls` for the default pure Rust TLS implementation (recommended)
 //! - Or provide a custom TLS connector by implementing the `CustomTlsConnector` trait
 //!
 //! ### Custom TLS Backend
 //!
-//! If you enable only the `tls` feature without a backend, you can implement your own
-//! TLS handshake logic using any TLS library (OpenSSL, BoringSSL, native-tls, etc.):
+//! If you enable the `tls` feature, you can implement your own TLS handshake logic
+//! using any TLS library (OpenSSL, BoringSSL, native-tls, etc.):
 //!
 //! ```ignore
 //! use slinger::{ConnectorBuilder, CustomTlsConnector};
@@ -129,7 +138,7 @@
 //! struct MyTlsConnector;
 //!
 //! impl CustomTlsConnector for MyTlsConnector {
-//!     fn connect<'a>(&'a self, stream: Socket, domain: &'a str)
+//!     fn connect<'a>(&'a self, domain: &'a str, stream: Socket)
 //!         -> Pin<Box<dyn Future<Output = Result<Socket>> + Send + 'a>>
 //!     {
 //!         // Your TLS implementation here
@@ -141,6 +150,9 @@
 //!     .custom_tls_connector(Arc::new(MyTlsConnector))
 //!     .build()?;
 //! ```
+//!
+//! When the `rustls` feature is enabled, rustls is provided as the default implementation
+//! but you can still override it with your own custom connector if needed.
 //!
 mod body;
 mod client;
@@ -162,33 +174,20 @@ mod serde_schema;
 mod socket;
 #[cfg(feature = "tls")]
 pub mod tls;
-#[cfg(feature = "tls")]
-pub use tls::Certificate;
-
 pub use body::Body;
 use bytes::Bytes;
 pub use client::{Client, ClientBuilder};
-#[cfg(all(feature = "tls", not(feature = "rustls")))]
-pub use connector::CustomTlsConnector;
 pub use connector::{Connector, ConnectorBuilder};
 pub use errors::{Error, Result};
 pub use http;
 #[cfg(feature = "serde")]
 pub use http_serde;
-// #[cfg(feature = "tls")]
-// pub use native_tls;
-// #[cfg(feature = "tls")]
-// pub use openssl;
 pub use proxy::Proxy;
 pub use request::{RawRequest, Request, RequestBuilder};
 pub use response::{Response, ResponseBuilder, ResponseConfig};
-#[cfg(all(feature = "tls", not(feature = "rustls")))]
-pub use socket::CustomTlsStream;
-#[cfg(all(feature = "tls", not(feature = "rustls")))]
-pub use socket::MaybeTlsStream;
 pub use socket::Socket;
 #[cfg(feature = "tls")]
-pub use tls::PeerCertificate;
+pub use socket::StreamWrapper;
 
 /// Shortcut method to quickly make a `GET` request.
 ///

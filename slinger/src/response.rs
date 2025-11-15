@@ -372,8 +372,8 @@ impl Response {
   /// ```
   ///
   #[cfg(feature = "tls")]
-  pub fn certificate(&self) -> Option<&PeerCertificate> {
-    self.extensions().get::<PeerCertificate>()
+  pub fn certificate(&self) -> Option<&Vec<PeerCertificate>> {
+    self.extensions().get::<Vec<PeerCertificate>>()
   }
   /// Get the http record used to get this `Response`.
   ///

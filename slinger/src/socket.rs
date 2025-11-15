@@ -1,20 +1,16 @@
 #[cfg(feature = "tls")]
-use crate::tls::PeerCertificate;
+use crate::tls::{CustomTlsStream, PeerCertificate};
 use std::io::Error;
 use std::ops::{Deref, DerefMut};
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
-use tokio::net::TcpStream;
-#[cfg(feature = "rustls")]
-use tokio_rustls::client::TlsStream as RustlsStream;
 
 /// Socket
-#[derive(Debug)]
 pub struct Socket {
   /// The underlying stream (TCP, TLS, or custom TLS)
-  pub inner: MaybeTlsStream,
+  pub inner: StreamWrapper,
   /// Read timeout for socket operations
   pub read_timeout: Option<Duration>,
   /// Write timeout for socket operations
@@ -24,7 +20,7 @@ pub struct Socket {
 impl Socket {
   /// Create a new Socket with the given stream and timeouts
   pub fn new(
-    maybe_tls_stream: MaybeTlsStream,
+    maybe_tls_stream: StreamWrapper,
     read_timeout: Option<Duration>,
     write_timeout: Option<Duration>,
   ) -> Self {
@@ -44,78 +40,40 @@ impl Socket {
   #[cfg(feature = "http2")]
   pub(crate) fn http2_negotiated(&self) -> Option<Vec<u8>> {
     match &self.inner {
-      MaybeTlsStream::Tcp(_) => None,
-      #[cfg(feature = "rustls")]
-      MaybeTlsStream::Rustls(tls) => tls
-        .get_ref()
-        .1
-        .alpn_protocol()
-        .map(|protocol| protocol.to_vec()),
-      #[cfg(all(feature = "tls", not(feature = "rustls")))]
-      MaybeTlsStream::Custom(c) => c.alpn_protocol(),
+      StreamWrapper::Tcp(_) => None,
+      #[cfg(feature = "tls")]
+      StreamWrapper::Custom(c) => c.alpn_protocol(),
     }
   }
 }
-/// Enum representing different types of streams (TCP, TLS with rustls, or custom TLS)
-#[derive(Debug)]
-pub enum MaybeTlsStream {
+
+/// Wrapper for StreamWrapper that allows h2 to work with any stream type
+pub enum StreamWrapper {
   /// TCP
-  Tcp(TcpStream),
-  #[cfg(feature = "rustls")]
-  /// TLS with rustls
-  Rustls(Box<RustlsStream<TcpStream>>),
-  #[cfg(all(feature = "tls", not(feature = "rustls")))]
-  /// Custom TLS implementation (when tls feature is enabled without rustls backend)
+  Tcp(tokio::net::TcpStream),
+  #[cfg(feature = "tls")]
+  /// Custom TLS implementation (when tls feature is enabled)
   Custom(Box<dyn CustomTlsStream>),
 }
-
-#[cfg(all(feature = "tls", not(feature = "rustls")))]
-/// Trait for custom TLS stream implementations
-pub trait CustomTlsStream:
-  AsyncRead + AsyncWrite + Send + Sync + std::fmt::Debug + Unpin + 'static
-{
-  /// Get the peer certificate from the TLS connection, if available
-  fn peer_certificate(&self) -> Option<PeerCertificate> {
-    None
-  }
-  /// Get the alpn_protocol
-  fn alpn_protocol(&self) -> Option<Vec<u8>> {
-    None
-  }
-}
-
-#[cfg(feature = "rustls")]
-impl From<RustlsStream<TcpStream>> for MaybeTlsStream {
-  fn from(stream: RustlsStream<TcpStream>) -> Self {
-    MaybeTlsStream::Rustls(Box::new(stream))
-  }
-}
-
-#[cfg(all(feature = "tls", not(feature = "rustls")))]
-impl<T: CustomTlsStream> From<T> for MaybeTlsStream {
-  fn from(stream: T) -> Self {
-    MaybeTlsStream::Custom(Box::new(stream))
-  }
-}
-
-impl MaybeTlsStream {
-  #[cfg(feature = "tls")]
-  /// get peer_certificate
-  pub fn peer_certificate(&self) -> Option<PeerCertificate> {
+#[cfg(feature = "tls")]
+impl CustomTlsStream for StreamWrapper {
+  fn peer_certificate(&self) -> Option<Vec<PeerCertificate>> {
     match &self {
-      MaybeTlsStream::Tcp(_) => None,
-      #[cfg(feature = "rustls")]
-      MaybeTlsStream::Rustls(stream) => stream
-        .get_ref()
-        .1
-        .peer_certificates()
-        .and_then(|certs| certs.first())
-        .map(|x| PeerCertificate { inner: x.to_vec() }),
-      #[cfg(all(feature = "tls", not(feature = "rustls")))]
-      MaybeTlsStream::Custom(stream) => stream.peer_certificate(),
+      StreamWrapper::Tcp(_) => None,
+      #[cfg(feature = "tls")]
+      StreamWrapper::Custom(stream) => stream.peer_certificate(),
+    }
+  }
+
+  fn alpn_protocol(&self) -> Option<Vec<u8>> {
+    match &self {
+      StreamWrapper::Tcp(_) => None,
+      #[cfg(feature = "tls")]
+      StreamWrapper::Custom(stream) => stream.alpn_protocol(),
     }
   }
 }
+
 // 实现socket的读写
 impl AsyncRead for Socket {
   fn poll_read(
@@ -143,52 +101,44 @@ impl AsyncWrite for Socket {
     Pin::new(&mut self.inner).poll_shutdown(cx)
   }
 }
-impl AsyncRead for MaybeTlsStream {
+impl AsyncRead for StreamWrapper {
   fn poll_read(
     self: Pin<&mut Self>,
     cx: &mut Context<'_>,
     buf: &mut ReadBuf<'_>,
   ) -> Poll<std::io::Result<()>> {
     match self.get_mut() {
-      MaybeTlsStream::Tcp(stream) => Pin::new(stream).poll_read(cx, buf),
-      #[cfg(feature = "rustls")]
-      MaybeTlsStream::Rustls(stream) => Pin::new(stream).poll_read(cx, buf),
-      #[cfg(all(feature = "tls", not(feature = "rustls")))]
-      MaybeTlsStream::Custom(stream) => Pin::new(stream).poll_read(cx, buf),
+      StreamWrapper::Tcp(stream) => Pin::new(stream).poll_read(cx, buf),
+      #[cfg(feature = "tls")]
+      StreamWrapper::Custom(stream) => Pin::new(stream).poll_read(cx, buf),
     }
   }
 }
-impl AsyncWrite for MaybeTlsStream {
+impl AsyncWrite for StreamWrapper {
   fn poll_write(
     self: Pin<&mut Self>,
     cx: &mut Context<'_>,
     buf: &[u8],
   ) -> Poll<Result<usize, Error>> {
     match self.get_mut() {
-      MaybeTlsStream::Tcp(stream) => Pin::new(stream).poll_write(cx, buf),
-      #[cfg(feature = "rustls")]
-      MaybeTlsStream::Rustls(stream) => Pin::new(stream).poll_write(cx, buf),
-      #[cfg(all(feature = "tls", not(feature = "rustls")))]
-      MaybeTlsStream::Custom(stream) => Pin::new(stream).poll_write(cx, buf),
+      StreamWrapper::Tcp(stream) => Pin::new(stream).poll_write(cx, buf),
+      #[cfg(feature = "tls")]
+      StreamWrapper::Custom(stream) => Pin::new(stream).poll_write(cx, buf),
     }
   }
 
   fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Error>> {
     match self.get_mut() {
-      MaybeTlsStream::Tcp(stream) => Pin::new(stream).poll_flush(cx),
-      #[cfg(feature = "rustls")]
-      MaybeTlsStream::Rustls(stream) => Pin::new(stream).poll_flush(cx),
-      #[cfg(all(feature = "tls", not(feature = "rustls")))]
-      MaybeTlsStream::Custom(stream) => Pin::new(stream).poll_flush(cx),
+      StreamWrapper::Tcp(stream) => Pin::new(stream).poll_flush(cx),
+      #[cfg(feature = "tls")]
+      StreamWrapper::Custom(stream) => Pin::new(stream).poll_flush(cx),
     }
   }
   fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Error>> {
     match self.get_mut() {
-      MaybeTlsStream::Tcp(stream) => Pin::new(stream).poll_shutdown(cx),
-      #[cfg(feature = "rustls")]
-      MaybeTlsStream::Rustls(stream) => Pin::new(stream).poll_shutdown(cx),
-      #[cfg(all(feature = "tls", not(feature = "rustls")))]
-      MaybeTlsStream::Custom(stream) => Pin::new(stream).poll_shutdown(cx),
+      StreamWrapper::Tcp(stream) => Pin::new(stream).poll_shutdown(cx),
+      #[cfg(feature = "tls")]
+      StreamWrapper::Custom(stream) => Pin::new(stream).poll_shutdown(cx),
     }
   }
 }
@@ -259,7 +209,7 @@ impl Socket {
 
 // 直接暴露socket的全部外部接口
 impl Deref for Socket {
-  type Target = MaybeTlsStream;
+  type Target = StreamWrapper;
 
   fn deref(&self) -> &Self::Target {
     &self.inner

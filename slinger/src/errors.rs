@@ -53,20 +53,28 @@ pub enum ReplyError {
 
 impl From<http::Error> for Error {
   fn from(value: http::Error) -> Self {
-    Error::Http(value)
+    let error = Error::Http(value);
+    tracing::error!("HTTP error: {}", error);
+    error
   }
 }
 
 impl From<http::header::InvalidHeaderValue> for Error {
   fn from(value: http::header::InvalidHeaderValue) -> Self {
-    Error::Http(http::Error::from(value))
+    let error = Error::Http(http::Error::from(value));
+    tracing::error!("Invalid header value error: {}", error);
+    error
   }
 }
 
 pub(crate) fn new_io_error(error_kind: ErrorKind, msg: &str) -> Error {
-  Error::IO(std::io::Error::new(error_kind, msg))
+  let error = Error::IO(std::io::Error::new(error_kind, msg));
+  tracing::error!("IO error: {}", error);
+  error
 }
 #[cfg(feature = "tls")]
 pub(crate) fn builder<E: Into<Box<dyn std::error::Error + Send + Sync>>>(e: E) -> Error {
-  Error::Other(e.into().to_string())
+  let error = Error::Other(e.into().to_string());
+  tracing::error!("Builder error: {}", error);
+  error
 }
