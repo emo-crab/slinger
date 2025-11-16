@@ -6,7 +6,7 @@ use crate::interceptor::InterceptorHandler;
 use crate::proxy::MitmConfig;
 use bytes::Bytes;
 use http::Version;
-use slinger::{Client, Request, Response};
+use slinger::{Client, ClientBuilder, Request, Response};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
@@ -22,6 +22,133 @@ pub struct ProxyServer {
   cert_manager: Arc<CertificateManager>,
   interceptor_handler: Arc<RwLock<InterceptorHandler>>,
   client: Client,
+}
+
+/// Builder for `ProxyServer`.
+///
+/// Allows configuring the server and the inner `slinger::Client`.
+#[derive(Default)]
+pub struct ProxyServerBuilder {
+  config: Option<MitmConfig>,
+  cert_manager: Option<Arc<CertificateManager>>,
+  interceptor_handler: Option<Arc<RwLock<InterceptorHandler>>>,
+  client: Option<Client>,
+  // Optional client configurator: takes a ClientBuilder and returns a configured ClientBuilder
+  client_config: Option<Box<dyn Fn(ClientBuilder) -> ClientBuilder + Send + Sync>>,
+}
+
+impl ProxyServerBuilder {
+  /// Start building from an existing `ProxyServer` configuration.
+  pub fn from_server(server: &ProxyServer) -> Self {
+    Self {
+      config: Some(server.config.clone()),
+      cert_manager: Some(server.cert_manager.clone()),
+      interceptor_handler: Some(server.interceptor_handler.clone()),
+      client: Some(server.client.clone()),
+      client_config: None,
+    }
+  }
+
+  /// Set the `MitmConfig` to use.
+  pub fn config(mut self, config: MitmConfig) -> Self {
+    self.config = Some(config);
+    self
+  }
+
+  /// Set the `CertificateManager` to use.
+  pub fn cert_manager(mut self, cert_manager: Arc<CertificateManager>) -> Self {
+    self.cert_manager = Some(cert_manager);
+    self
+  }
+
+  /// Set the `InterceptorHandler` to use.
+  pub fn interceptor_handler(mut self, handler: Arc<RwLock<InterceptorHandler>>) -> Self {
+    self.interceptor_handler = Some(handler);
+    self
+  }
+
+  /// Provide a fully constructed `slinger::Client` to use.
+  pub fn client(mut self, client: Client) -> Self {
+    self.client = Some(client);
+    self
+  }
+
+  /// Configure the internal `slinger::Client` using a closure that accepts a
+  /// `ClientBuilder` and returns a configured `ClientBuilder`.
+  pub fn configure_client<F>(mut self, f: F) -> Self
+  where
+    F: Fn(ClientBuilder) -> ClientBuilder + Send + Sync + 'static,
+  {
+    self.client_config = Some(Box::new(f));
+    self
+  }
+
+  /// Build the `ProxyServer`.
+  ///
+  /// Priority for creating the inner `Client`:
+  /// 1. If `client` is provided, use it.
+  /// 2. Else if `client_config` is provided, call it with `Client::builder()`.
+  /// 3. Else fall back to default behavior: honor `config.upstream_proxy` if present
+  ///    and otherwise create a default client similar to `ProxyServer::new`.
+  pub fn build(self) -> Result<ProxyServer> {
+    // Resolve config
+    let config = self.config.unwrap_or_default();
+
+    // For synchronous build we require a pre-created CertificateManager because
+    // creation is async. Callers who don't have one should use `build_async()`.
+    let cert_manager = match self.cert_manager {
+      Some(c) => c,
+      None => {
+        return Err(Error::proxy_error(
+          "CertificateManager not provided; use ProxyServer::builder().build_async().await to create one automatically".to_string(),
+        ))
+      }
+    };
+
+    // Resolve interceptor handler
+    let interceptor_handler = self
+      .interceptor_handler
+      .unwrap_or_else(|| Arc::new(RwLock::new(InterceptorHandler::new())));
+
+    // Resolve client
+    let client = if let Some(client) = self.client {
+      client
+    } else if let Some(cfg_fn) = self.client_config {
+      let builder = Client::builder();
+      let configured = cfg_fn(builder);
+      configured
+        .build()
+        .map_err(|e| Error::proxy_error(format!("Failed to build client: {}", e)))?
+    } else {
+      // Fallback: honor upstream_proxy in config similar to ProxyServer::new
+      if let Some(proxy) = &config.upstream_proxy {
+        Client::builder()
+          .timeout(Some(Duration::from_secs(60)))
+          .keepalive(true)
+          .proxy(proxy.clone())
+          .build()
+          .map_err(|e| {
+            Error::proxy_error(format!(
+              "Failed to build client with proxy {}: {}",
+              proxy.uri(),
+              e
+            ))
+          })?
+      } else {
+        Client::builder()
+          .keepalive(true)
+          .build()
+          .map_err(|e| Error::proxy_error(format!("Failed to build default client: {}", e)))?
+      }
+    };
+
+    Ok(ProxyServer {
+      config,
+      cert_manager,
+      interceptor_handler,
+      client,
+    })
+  }
 }
 
 impl ProxyServer {
@@ -77,12 +204,12 @@ impl ProxyServer {
             if let Err(e) =
               Self::handle_connection(stream, config, cert_manager, interceptor, client).await
             {
-              eprintln!("[MITM] Error handling connection: {}", e);
+              tracing::error!("[MITM] Error handling connection: {}", e);
             }
           });
         }
         Err(e) => {
-          eprintln!("[MITM] Failed to accept connection: {}", e);
+          tracing::error!("[MITM] Failed to accept connection: {}", e);
         }
       }
     }
@@ -140,9 +267,7 @@ impl ProxyServer {
             }
           }
         }
-        Err(e) => {
-          Err(e)
-        }
+        Err(e) => Err(e),
       }
     } else {
       let mut request_line = vec![first_byte[0]];
@@ -203,7 +328,7 @@ impl ProxyServer {
 
   /// Handle HTTPS CONNECT with MITM interception
   async fn handle_https_connect(
-    mut client_stream: TcpStream,
+    client_stream: TcpStream,
     uri: &str,
     cert_manager: Arc<CertificateManager>,
     interceptor: Arc<RwLock<InterceptorHandler>>,
@@ -211,76 +336,28 @@ impl ProxyServer {
   ) -> Result<()> {
     // Parse domain and port
     let (domain, port) = Self::parse_host_port(uri)?;
-    // Send 200 Connection Established to client
-    client_stream
-      .write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n")
-      .await?;
-    client_stream
-      .flush() // ← 关键：确保 HTTP 响应完全发送
-      .await
-      .map_err(Error::Io)?;
-    // Generate server certificate for this domain
-    let (cert_chain, key) = cert_manager.get_server_cert(&domain).await?;
-    // Create TLS acceptor
-    let tls_config = Self::create_tls_server_config(cert_chain, key)?;
-    let acceptor = TlsAcceptor::from(Arc::new(tls_config));
-    // Perform TLS handshake with client
-    let tls_stream = acceptor
-      .accept(client_stream)
-      .await
-      .map_err(|e| Error::tls_error(format!("TLS handshake failed: {}", e)))?;
-    let domain_with_port = format!("{}:{}", domain, port);
-    Self::handle_https_stream(tls_stream, domain_with_port, interceptor, slinger_client).await
+    // Perform TLS accept + MITM handling, send HTTP 200 before TLS handshake
+    Self::accept_tls_and_handle(
+      client_stream,
+      &domain,
+      port,
+      true,
+      cert_manager,
+      interceptor,
+      slinger_client,
+    )
+    .await
   }
 
   /// Handle HTTPS tunnel without interception (transparent proxy)
-  async fn handle_https_tunnel(mut client_stream: TcpStream, uri: &str) -> Result<()> {
-    let (host, port) = Self::parse_host_port(uri)?;
-    let target_addr = format!("{}:{}", host, port);
-
-    // Connect to target server
-    let mut target_stream = TcpStream::connect(&target_addr).await.map_err(|e| {
-      Error::connection_error(format!("Failed to connect to {}: {}", target_addr, e))
-    })?;
-    client_stream
-      .write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n")
-      .await?;
-    let (mut client_read, mut client_write) = client_stream.split();
-    let (mut target_read, mut target_write) = target_stream.split();
-    let client_to_target = tokio::io::copy(&mut client_read, &mut target_write);
-    let target_to_client = tokio::io::copy(&mut target_read, &mut client_write);
-    tokio::select! {
-        _ = client_to_target => {},
-        _ = target_to_client => {},
-    }
-    Ok(())
+  async fn handle_https_tunnel(client_stream: TcpStream, uri: &str) -> Result<()> {
+    Self::tcp_tunnel(client_stream, uri, true).await
   }
 
   /// Handle TCP tunnel without interception (for SOCKS5)
   /// This function doesn't send any response - the SOCKS5 handshake already sent the reply
-  async fn handle_tcp_tunnel(mut client_stream: TcpStream, target_addr: &str) -> Result<()> {
-    // Parse host and port
-    let (host, port) = Self::parse_host_port(target_addr)?;
-    let addr = format!("{}:{}", host, port);
-
-    // Connect to target server
-    let mut target_stream = TcpStream::connect(&addr)
-      .await
-      .map_err(|e| Error::connection_error(format!("Failed to connect to {}: {}", addr, e)))?;
-
-    // Bidirectional copy
-    let (mut client_read, mut client_write) = client_stream.split();
-    let (mut target_read, mut target_write) = target_stream.split();
-
-    let client_to_target = tokio::io::copy(&mut client_read, &mut target_write);
-    let target_to_client = tokio::io::copy(&mut target_read, &mut client_write);
-
-    tokio::select! {
-        _ = client_to_target => {},
-        _ = target_to_client => {},
-    }
-
-    Ok(())
+  async fn handle_tcp_tunnel(client_stream: TcpStream, target_addr: &str) -> Result<()> {
+    Self::tcp_tunnel(client_stream, target_addr, false).await
   }
 
   /// Handle HTTPS CONNECT with MITM interception for SOCKS5
@@ -295,13 +372,45 @@ impl ProxyServer {
     // Parse domain and port
     let (domain, port) = Self::parse_host_port(uri)?;
 
-    // Generate server certificate for this domain
-    let (cert_chain, key) = cert_manager.get_server_cert(&domain).await?;
+    // Perform TLS accept + MITM handling, do NOT send HTTP 200 (SOCKS5 already responded)
+    Self::accept_tls_and_handle(
+      client_stream,
+      &domain,
+      port,
+      false,
+      cert_manager,
+      interceptor,
+      slinger_client,
+    )
+    .await
+  }
 
+  /// Accept TLS on an incoming stream (using certs from CertificateManager) and handle HTTPS requests over it.
+  /// If `send_response` is true, send an HTTP/1.1 200 Connection Established before performing the TLS handshake
+  async fn accept_tls_and_handle(
+    mut client_stream: TcpStream,
+    domain: &str,
+    port: u16,
+    send_response: bool,
+    cert_manager: Arc<CertificateManager>,
+    interceptor: Arc<RwLock<InterceptorHandler>>,
+    slinger_client: Client,
+  ) -> Result<()> {
+    if send_response {
+      client_stream
+        .write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n")
+        .await?;
+      client_stream
+        .flush() // ensure response fully sent
+        .await
+        .map_err(Error::Io)?;
+    }
+
+    // Generate server certificate for this domain
+    let (cert_chain, key) = cert_manager.get_server_cert(domain).await?;
     // Create TLS acceptor
     let tls_config = Self::create_tls_server_config(cert_chain, key)?;
     let acceptor = TlsAcceptor::from(Arc::new(tls_config));
-
     // Perform TLS handshake with client
     let tls_stream = acceptor
       .accept(client_stream)
@@ -309,6 +418,74 @@ impl ProxyServer {
       .map_err(|e| Error::tls_error(format!("TLS handshake failed: {}", e)))?;
     let domain_with_port = format!("{}:{}", domain, port);
     Self::handle_https_stream(tls_stream, domain_with_port, interceptor, slinger_client).await
+  }
+
+  /// Generic TCP tunnel helper. If `send_response` is true, sends HTTP/1.1 200 before tunneling.
+  async fn tcp_tunnel(mut client_stream: TcpStream, uri: &str, send_response: bool) -> Result<()> {
+    let (host, port) = Self::parse_host_port(uri)?;
+    let addr = format!("{}:{}", host, port);
+
+    // Connect to target server
+    let mut target_stream = TcpStream::connect(&addr)
+      .await
+      .map_err(|e| Error::connection_error(format!("Failed to connect to {}: {}", addr, e)))?;
+
+    if send_response {
+      client_stream
+        .write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n")
+        .await?;
+    }
+
+    let (mut client_read, mut client_write) = client_stream.split();
+    let (mut target_read, mut target_write) = target_stream.split();
+
+    let client_to_target = tokio::io::copy(&mut client_read, &mut target_write);
+    let target_to_client = tokio::io::copy(&mut target_read, &mut client_write);
+
+    tokio::select! {
+        _ = client_to_target => {},
+        _ = target_to_client => {},
+    }
+
+    Ok(())
+  }
+
+  /// Forward a prepared `Request` through the inner `slinger::Client` and run interceptors.
+  /// Returns Some(response_bytes) if there is a response to write back to the caller, or None if
+  /// the interceptor chain dropped the request/response.
+  async fn forward_request_via_client(
+    interceptor: Arc<RwLock<InterceptorHandler>>,
+    client: &Client,
+    request: Request,
+  ) -> Result<Option<Vec<u8>>> {
+    let handler = interceptor.read().await;
+    if let Some(modified_req) = handler.process_request(request).await? {
+      let uri = modified_req.uri().clone();
+      let method = modified_req.method().clone();
+      let headers = modified_req.headers().clone();
+      let body_data = if let Some(body) = modified_req.body() {
+        body.to_vec()
+      } else {
+        Vec::new()
+      };
+      let mut req_builder = client.request(method, uri);
+      for (name, value) in headers.iter() {
+        req_builder = req_builder.header(name, value);
+      }
+      req_builder = req_builder.body(body_data);
+      match req_builder.send().await {
+        Ok(response) => {
+          if let Some(final_response) = handler.process_response(response).await? {
+            let response_bytes = Self::serialize_http_response(&final_response)?;
+            return Ok(Some(response_bytes));
+          }
+        }
+        Err(_e) => {
+          return Ok(Some(b"HTTP/1.1 502 Bad Gateway\r\n\r\n".to_vec()));
+        }
+      }
+    }
+    Ok(None)
   }
 
   /// Handle HTTPS requests over TLS connection
@@ -346,34 +523,10 @@ impl ProxyServer {
 
     // Parse request
     if let Ok(request) = Self::parse_http_request(&buffer, &domain) {
-      // Process through interceptors
-      let handler = interceptor.read().await;
-      if let Some(modified_req) = handler.process_request(request).await? {
-        let uri = modified_req.uri().clone();
-        let method = modified_req.method().clone();
-        let headers = modified_req.headers().clone();
-        let body_data = if let Some(body) = modified_req.body() {
-          body.to_vec()
-        } else {
-          Vec::new()
-        };
-        let mut req_builder = client.request(method, uri);
-        for (name, value) in headers.iter() {
-          req_builder = req_builder.header(name, value);
-        }
-        req_builder = req_builder.body(body_data);
-        match req_builder.send().await {
-          Ok(response) => {
-            if let Some(final_response) = handler.process_response(response).await? {
-              let response_bytes = Self::serialize_http_response(&final_response)?;
-              tls_stream.write_all(&response_bytes).await?;
-            }
-          }
-          Err(_e) => {
-            let error_response = b"HTTP/1.1 502 Bad Gateway\r\n\r\n";
-            tls_stream.write_all(error_response).await?;
-          }
-        }
+      if let Some(response_bytes) =
+        Self::forward_request_via_client(interceptor, &client, request).await?
+      {
+        tls_stream.write_all(&response_bytes).await?;
       }
     }
 
@@ -428,40 +581,12 @@ impl ProxyServer {
     let http_request = request_builder.body(Bytes::new())?;
     let request: Request = http_request.into();
 
-    // Process through interceptors
-    let handler = interceptor.read().await;
-    if let Some(modified_req) = handler.process_request(request).await? {
-      // Forward using slinger
-      let uri = modified_req.uri().clone();
-      let method = modified_req.method().clone();
-      let headers = modified_req.headers().clone();
-      let body_data = if let Some(body) = modified_req.body() {
-        body.to_vec()
-      } else {
-        Vec::new()
-      };
-
-      let mut req_builder = client.request(method, uri);
-      for (name, value) in headers.iter() {
-        req_builder = req_builder.header(name, value);
-      }
-      req_builder = req_builder.body(body_data);
-
-      match req_builder.send().await {
-        Ok(response) => {
-          if let Some(final_response) = handler.process_response(response).await? {
-            let response_bytes = Self::serialize_http_response(&final_response)?;
-            let mut stream = reader.into_inner();
-            stream.write_all(&response_bytes).await?;
-          }
-        }
-        Err(_e) => {
-          let mut stream = reader.into_inner();
-          stream
-            .write_all(b"HTTP/1.1 502 Bad Gateway\r\n\r\n")
-            .await?;
-        }
-      }
+    // Process through interceptors and forward
+    if let Some(response_bytes) =
+      Self::forward_request_via_client(interceptor, &client, request).await?
+    {
+      let mut stream = reader.into_inner();
+      stream.write_all(&response_bytes).await?;
     }
 
     Ok(())

@@ -92,9 +92,9 @@ pub struct LoggingInterceptor;
 #[async_trait::async_trait]
 impl RequestInterceptor for LoggingInterceptor {
   async fn intercept_request(&self, request: Request) -> Result<Option<Request>> {
-    println!("[MITM] Request: {} {}", request.method(), request.uri());
+    tracing::info!("[MITM] Request: {} {}", request.method(), request.uri());
     for (name, value) in request.headers() {
-      println!("  {}: {:?}", name, value);
+      tracing::info!("  {}: {:?}", name, value);
     }
     Ok(Some(request))
   }
@@ -103,11 +103,11 @@ impl RequestInterceptor for LoggingInterceptor {
 #[async_trait::async_trait]
 impl ResponseInterceptor for LoggingInterceptor {
   async fn intercept_response(&self, response: Response) -> Result<Option<Response>> {
-    println!("[MITM] Response: {}", response.status_code());
+    tracing::info!("[MITM] Response: {}", response.status_code());
     for (name, value) in response.headers() {
-      println!("  {}: {:?}", name, value);
+      tracing::info!("  {}: {:?}", name, value);
     }
-    // println!("[MITM] Response Body: {:?}", response.body());
+    // tracing::debug!("[MITM] Response Body: {:?}", response.body());
     Ok(Some(response))
   }
 }

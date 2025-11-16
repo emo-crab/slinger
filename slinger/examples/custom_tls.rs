@@ -10,15 +10,17 @@
 //!
 //! Note: This example demonstrates the API with a mock TLS implementation for educational purposes.
 
+#[cfg(feature = "tls")]
 use slinger::tls::CustomTlsStream;
 #[cfg(feature = "tls")]
 use slinger::tls::{CustomTlsConnector, PeerCertificate};
 #[cfg(feature = "tls")]
 use slinger::{ConnectorBuilder, Result, Socket, StreamWrapper};
-use std::pin::Pin;
 #[cfg(feature = "tls")]
 use std::sync::Arc;
+#[cfg(feature = "tls")]
 use std::task::{Context, Poll};
+#[cfg(feature = "tls")]
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
 #[cfg(feature = "tls")]
