@@ -35,7 +35,7 @@ pub use ca::{CertificateAuthority, CertificateManager};
 pub use error::{Error, Result};
 pub use interceptor::{Interceptor, InterceptorHandler, RequestInterceptor, ResponseInterceptor};
 pub use proxy::{MitmConfig, MitmProxy};
-pub use server::ProxyServer;
+pub use server::{ProxyServer, ProxyServerBuilder};
 pub use socks5::{Socks5Server, TargetAddr};
 
 #[cfg(test)]
