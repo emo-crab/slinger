@@ -10,7 +10,7 @@ license.workspace = true
 
 [dependencies]
 # Core slinger library
-slinger = { version = "0.2.10", features = ["tls", "rustls", "http2"] }
+slinger = { version = "0.2.11", features = ["tls", "rustls", "http2"] }
 # Workspace dependencies
 thiserror.workspace = true
 http.workspace = true

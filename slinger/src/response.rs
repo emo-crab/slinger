@@ -34,7 +34,8 @@ pub struct Response {
       example = "HTTP/1.1"
     )
   )]
-  version: http::Version,
+  /// The HTTP version of the response.
+  pub version: http::Version,
   #[cfg_attr(feature = "serde", serde(with = "http_serde::uri"))]
   #[cfg_attr(
     feature = "schema",
@@ -45,7 +46,8 @@ pub struct Response {
       example = "https://example.com/api/v1/resource"
     )
   )]
-  uri: http::Uri,
+  /// The final URI of the response.
+  pub uri: http::Uri,
   #[cfg_attr(feature = "serde", serde(with = "http_serde::status_code"))]
   #[cfg_attr(
     feature = "schema",
@@ -56,7 +58,8 @@ pub struct Response {
       schema_with = "crate::serde_schema::status_code_schema"
     )
   )]
-  status_code: http::StatusCode,
+  /// The status code of the response.
+  pub status_code: http::StatusCode,
   #[cfg_attr(feature = "serde", serde(with = "http_serde::header_map"))]
   #[cfg_attr(
     feature = "schema",
@@ -67,9 +70,11 @@ pub struct Response {
       example = r#"{"Content-Type": "application/json", "Cache-Control": "max-age=3600"}"#
     )
   )]
-  headers: http::HeaderMap<http::HeaderValue>,
+  /// The headers of the response.
+  pub headers: http::HeaderMap<http::HeaderValue>,
   #[cfg_attr(feature = "serde", serde(skip))]
-  extensions: http::Extensions,
+  /// The extensions associated with the response.
+  pub extensions: http::Extensions,
   #[cfg_attr(
     feature = "schema",
     schemars(
@@ -78,7 +83,8 @@ pub struct Response {
       example = r#"{"data": {"id": 123, "name": "example"}}"#,
     )
   )]
-  body: Option<Body>,
+  /// The body of the response.
+  pub body: Option<Body>,
 }
 
 impl PartialEq for Response {

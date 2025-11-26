@@ -18,10 +18,6 @@ use slinger::tls::{CustomTlsConnector, PeerCertificate};
 use slinger::{ConnectorBuilder, Result, Socket, StreamWrapper};
 #[cfg(feature = "tls")]
 use std::sync::Arc;
-#[cfg(feature = "tls")]
-use std::task::{Context, Poll};
-#[cfg(feature = "tls")]
-use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
 #[cfg(feature = "tls")]
 /// Mock TLS stream for demonstration purposes
@@ -41,42 +37,7 @@ impl CustomTlsStream for MockTlsStream {
     None
   }
 }
-#[cfg(feature = "tls")]
-impl AsyncRead for MockTlsStream {
-  fn poll_read(
-    mut self: Pin<&mut Self>,
-    cx: &mut Context<'_>,
-    buf: &mut ReadBuf<'_>,
-  ) -> Poll<std::io::Result<()>> {
-    Pin::new(&mut self.inner).poll_read(cx, buf)
-  }
-}
-
-#[cfg(feature = "tls")]
-impl AsyncWrite for MockTlsStream {
-  fn poll_write(
-    mut self: Pin<&mut Self>,
-    cx: &mut Context<'_>,
-    buf: &[u8],
-  ) -> Poll<std::result::Result<usize, std::io::Error>> {
-    Pin::new(&mut self.inner).poll_write(cx, buf)
-  }
-
-  fn poll_flush(
-    mut self: Pin<&mut Self>,
-    cx: &mut Context<'_>,
-  ) -> Poll<std::result::Result<(), std::io::Error>> {
-    Pin::new(&mut self.inner).poll_flush(cx)
-  }
-
-  fn poll_shutdown(
-    mut self: Pin<&mut Self>,
-    cx: &mut Context<'_>,
-  ) -> Poll<std::result::Result<(), std::io::Error>> {
-    Pin::new(&mut self.inner).poll_shutdown(cx)
-  }
-}
-
+slinger::impl_tls_stream!(MockTlsStream, inner);
 #[cfg(feature = "tls")]
 /// Example custom TLS connector implementation
 ///
