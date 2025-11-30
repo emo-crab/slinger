@@ -165,7 +165,7 @@ impl CertificateAuthority {
     let mut params = CertificateParams::default();
 
     // Generate random serial number for uniqueness
-    params.serial_number = Some(rand::thread_rng().gen::<u64>().into());
+    params.serial_number = Some(rand::rng().random::<u64>().into());
 
     // Set up distinguished name
     let mut dn = DistinguishedName::new();

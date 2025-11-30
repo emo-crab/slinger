@@ -2,11 +2,12 @@
 
 use crate::ca::CertificateManager;
 use crate::error::{Error, Result};
-use crate::interceptor::InterceptorHandler;
+use crate::interceptor::{InterceptorHandler, MitmRequest, MitmResponse};
 use crate::proxy::MitmConfig;
 use bytes::Bytes;
 use http::Version;
 use slinger::{Client, ClientBuilder, Request, Response};
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
@@ -194,7 +195,7 @@ impl ProxyServer {
       .map_err(|e| Error::proxy_error(format!("Failed to bind to {}: {}", addr, e)))?;
     loop {
       match listener.accept().await {
-        Ok((stream, _peer_addr)) => {
+        Ok((stream, peer_addr)) => {
           let config = self.config.clone();
           let cert_manager = self.cert_manager.clone();
           let interceptor = self.interceptor_handler.clone();
@@ -202,7 +203,8 @@ impl ProxyServer {
 
           tokio::spawn(async move {
             if let Err(e) =
-              Self::handle_connection(stream, config, cert_manager, interceptor, client).await
+              Self::handle_connection(stream, peer_addr, config, cert_manager, interceptor, client)
+                .await
             {
               tracing::error!("[MITM] Error handling connection: {}", e);
             }
@@ -218,6 +220,7 @@ impl ProxyServer {
   /// Handle a client connection
   async fn handle_connection(
     mut stream: TcpStream,
+    peer_addr: SocketAddr,
     config: MitmConfig,
     cert_manager: Arc<CertificateManager>,
     interceptor: Arc<RwLock<InterceptorHandler>>,
@@ -236,35 +239,30 @@ impl ProxyServer {
       match Socks5Server::handle_handshake_with_version(&mut stream).await {
         Ok(target_addr) => {
           let target_host_port = target_addr.to_host_port();
-          match target_addr {
-            crate::socks5::TargetAddr::Domain(_domain, _port) => {
-              if config.enable_https_interception {
-                Self::handle_https_connect_socks5(
-                  stream,
-                  &target_host_port,
-                  cert_manager,
-                  interceptor,
-                  client,
-                )
-                .await
-              } else {
-                Self::handle_tcp_tunnel(stream, &target_host_port).await
-              }
-            }
-            _ => {
-              if config.enable_https_interception {
-                Self::handle_https_connect_socks5(
-                  stream,
-                  &target_host_port,
-                  cert_manager,
-                  interceptor,
-                  client,
-                )
-                .await
-              } else {
-                Self::handle_tcp_tunnel(stream, &target_host_port).await
-              }
-            }
+
+          // Check if TCP interception is enabled and if there are interceptors
+          let has_interceptors = interceptor.read().await.has_interceptors();
+
+          if config.enable_tcp_interception && has_interceptors {
+            // Use TCP interception for raw TCP traffic
+            Self::handle_tcp_tunnel_with_interception(
+              stream,
+              &target_host_port,
+              peer_addr,
+              interceptor,
+            )
+            .await
+          } else if config.enable_https_interception {
+            Self::handle_https_connect_socks5(
+              stream,
+              &target_host_port,
+              cert_manager,
+              interceptor,
+              client,
+            )
+            .await
+          } else {
+            Self::handle_tcp_tunnel(stream, &target_host_port).await
           }
         }
         Err(e) => Err(e),
@@ -450,6 +448,117 @@ impl ProxyServer {
     Ok(())
   }
 
+  /// TCP tunnel with interception capability for raw TCP traffic.
+  /// This method intercepts both request and response data, passes them through
+  /// the interceptors, and forwards the (potentially modified) data.
+  async fn handle_tcp_tunnel_with_interception(
+    client_stream: TcpStream,
+    target_addr: &str,
+    peer_addr: SocketAddr,
+    interceptor: Arc<RwLock<InterceptorHandler>>,
+  ) -> Result<()> {
+    let (host, port) = Self::parse_host_port(target_addr)?;
+    let addr = format!("{}:{}", host, port);
+
+    // Connect to target server
+    let target_stream = TcpStream::connect(&addr)
+      .await
+      .map_err(|e| Error::connection_error(format!("Failed to connect to {}: {}", addr, e)))?;
+
+    let (mut client_read, mut client_write) = client_stream.into_split();
+    let (mut target_read, mut target_write) = target_stream.into_split();
+
+    let target_addr_clone = addr.clone();
+    let interceptor_clone = interceptor.clone();
+
+    // Client to target with interception
+    let client_to_target = tokio::spawn(async move {
+      let mut buffer = vec![0u8; 8192];
+      loop {
+        match client_read.read(&mut buffer).await {
+          Ok(0) => break, // Connection closed
+          Ok(n) => {
+            let data = Bytes::copy_from_slice(&buffer[..n]);
+            let request = MitmRequest::raw_tcp_with_source(peer_addr, &target_addr_clone, data);
+
+            // Process through interceptors
+            let handler = interceptor_clone.read().await;
+            match handler.process_request(request).await {
+              Ok(Some(modified_request)) => {
+                // Forward modified data to target
+                if let Some(body) = modified_request.body() {
+                  if let Err(e) = target_write.write_all(body.as_ref()).await {
+                    tracing::error!("[MITM TCP] Error writing to target: {}", e);
+                    break;
+                  }
+                }
+              }
+              Ok(None) => {
+                // Request blocked by interceptor
+                tracing::debug!("[MITM TCP] Request blocked by interceptor");
+              }
+              Err(e) => {
+                tracing::error!("[MITM TCP] Error processing request: {}", e);
+                break;
+              }
+            }
+          }
+          Err(e) => {
+            tracing::error!("[MITM TCP] Error reading from client: {}", e);
+            break;
+          }
+        }
+      }
+    });
+
+    // Target to client with interception
+    let target_to_client = tokio::spawn(async move {
+      let mut buffer = vec![0u8; 8192];
+      loop {
+        match target_read.read(&mut buffer).await {
+          Ok(0) => break, // Connection closed
+          Ok(n) => {
+            let data = Bytes::copy_from_slice(&buffer[..n]);
+            let response = MitmResponse::raw_tcp_with_destination(&addr, peer_addr, data);
+
+            // Process through interceptors
+            let handler = interceptor.read().await;
+            match handler.process_response(response).await {
+              Ok(Some(modified_response)) => {
+                // Forward modified data to client
+                if let Some(body) = modified_response.body() {
+                  if let Err(e) = client_write.write_all(body.as_ref()).await {
+                    tracing::error!("[MITM TCP] Error writing to client: {}", e);
+                    break;
+                  }
+                }
+              }
+              Ok(None) => {
+                // Response blocked by interceptor
+                tracing::debug!("[MITM TCP] Response blocked by interceptor");
+              }
+              Err(e) => {
+                tracing::error!("[MITM TCP] Error processing response: {}", e);
+                break;
+              }
+            }
+          }
+          Err(e) => {
+            tracing::error!("[MITM TCP] Error reading from target: {}", e);
+            break;
+          }
+        }
+      }
+    });
+
+    tokio::select! {
+        _ = client_to_target => {},
+        _ = target_to_client => {},
+    }
+
+    Ok(())
+  }
+
   /// Forward a prepared `Request` through the inner `slinger::Client` and run interceptors.
   /// Returns Some(response_bytes) if there is a response to write back to the caller, or None if
   /// the interceptor chain dropped the request/response.
@@ -457,13 +566,16 @@ impl ProxyServer {
     interceptor: Arc<RwLock<InterceptorHandler>>,
     client: &Client,
     request: Request,
+    destination: &str,
   ) -> Result<Option<Vec<u8>>> {
     let handler = interceptor.read().await;
-    if let Some(modified_req) = handler.process_request(request).await? {
-      let uri = modified_req.uri().clone();
-      let method = modified_req.method().clone();
-      let headers = modified_req.headers().clone();
-      let body_data = if let Some(body) = modified_req.body() {
+    let mitm_request = MitmRequest::new(destination, request);
+    if let Some(modified_req) = handler.process_request(mitm_request).await? {
+      let inner_req = modified_req.request();
+      let uri = inner_req.uri().clone();
+      let method = inner_req.method().clone();
+      let headers = inner_req.headers().clone();
+      let body_data = if let Some(body) = inner_req.body() {
         body.to_vec()
       } else {
         Vec::new()
@@ -475,8 +587,9 @@ impl ProxyServer {
       req_builder = req_builder.body(body_data);
       match req_builder.send().await {
         Ok(response) => {
-          if let Some(final_response) = handler.process_response(response).await? {
-            let response_bytes = Self::serialize_http_response(&final_response)?;
+          let mitm_response = MitmResponse::new(destination, response);
+          if let Some(final_response) = handler.process_response(mitm_response).await? {
+            let response_bytes = Self::serialize_http_response(final_response.response())?;
             return Ok(Some(response_bytes));
           }
         }
@@ -524,7 +637,7 @@ impl ProxyServer {
     // Parse request
     if let Ok(request) = Self::parse_http_request(&buffer, &domain) {
       if let Some(response_bytes) =
-        Self::forward_request_via_client(interceptor, &client, request).await?
+        Self::forward_request_via_client(interceptor, &client, request, &domain).await?
       {
         tls_stream.write_all(&response_bytes).await?;
       }
@@ -583,7 +696,7 @@ impl ProxyServer {
 
     // Process through interceptors and forward
     if let Some(response_bytes) =
-      Self::forward_request_via_client(interceptor, &client, request).await?
+      Self::forward_request_via_client(interceptor, &client, request, uri).await?
     {
       let mut stream = reader.into_inner();
       stream.write_all(&response_bytes).await?;

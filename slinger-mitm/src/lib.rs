@@ -33,7 +33,10 @@ mod socks5;
 
 pub use ca::{CertificateAuthority, CertificateManager};
 pub use error::{Error, Result};
-pub use interceptor::{Interceptor, InterceptorHandler, RequestInterceptor, ResponseInterceptor};
+pub use interceptor::{
+  Interceptor, InterceptorHandler, LoggingInterceptor, MitmRequest, MitmResponse,
+  RequestInterceptor, ResponseInterceptor,
+};
 pub use proxy::{MitmConfig, MitmProxy};
 pub use server::{ProxyServer, ProxyServerBuilder};
 pub use socks5::{Socks5Server, TargetAddr};

@@ -10,8 +10,7 @@
 
 use async_trait::async_trait;
 use http::HeaderValue;
-use slinger::{Request, Response};
-use slinger_mitm::{MitmConfig, MitmProxy, RequestInterceptor, ResponseInterceptor, Result};
+use slinger_mitm::{MitmConfig, MitmProxy, MitmRequest, MitmResponse, RequestInterceptor, ResponseInterceptor, Result};
 use std::sync::Arc;
 
 /// Custom request interceptor that adds a custom header
@@ -19,20 +18,24 @@ struct CustomHeaderInterceptor;
 
 #[async_trait]
 impl RequestInterceptor for CustomHeaderInterceptor {
-  async fn intercept_request(&self, mut request: Request) -> Result<Option<Request>> {
-    println!("[CUSTOM] Intercepting request to: {}", request.uri());
+  async fn intercept_request(&self, mut request: MitmRequest) -> Result<Option<MitmRequest>> {
+    println!("[CUSTOM] Intercepting request to: {}", request.destination());
+    println!("[CUSTOM] Timestamp: {}", request.timestamp());
 
-    // Add a custom header
-    request
-      .headers_mut()
-      .insert("X-Slinger-MITM", HeaderValue::from_static("true"));
+    if request.is_http() {
+      // Add a custom header
+      request
+        .request_mut()
+        .headers_mut()
+        .insert("X-Slinger-MITM", HeaderValue::from_static("true"));
 
-    // Modify User-Agent
-    if request.headers().contains_key("User-Agent") {
-      request.headers_mut().insert(
-        "User-Agent",
-        HeaderValue::from_static("Slinger-MITM-Proxy/1.0"),
-      );
+      // Modify User-Agent
+      if request.request().headers().contains_key("User-Agent") {
+        request.request_mut().headers_mut().insert(
+          "User-Agent",
+          HeaderValue::from_static("Slinger-MITM-Proxy/1.0"),
+        );
+      }
     }
 
     Ok(Some(request))
@@ -44,19 +47,19 @@ struct ResponseModifierInterceptor;
 
 #[async_trait]
 impl ResponseInterceptor for ResponseModifierInterceptor {
-  async fn intercept_response(&self, mut response: Response) -> Result<Option<Response>> {
-    println!("[CUSTOM] Intercepting response: {}", response.status_code());
+  async fn intercept_response(&self, mut response: MitmResponse) -> Result<Option<MitmResponse>> {
+    println!("[CUSTOM] Intercepting response from: {}", response.source());
+    println!("[CUSTOM] Timestamp: {}", response.timestamp());
 
-    // Add a custom header to the response
-    response.headers_mut().insert(
-      "X-Slinger-MITM-Response",
-      HeaderValue::from_static("modified"),
-    );
-
-    // You could also modify the body here if needed
-    // let body = response.body();
-    // let modified_body = modify_body(body);
-    // *response.body_mut() = modified_body;
+    if response.is_http() {
+      println!("[CUSTOM] HTTP Status: {}", response.response().status_code());
+      
+      // Add a custom header to the response
+      response.response_mut().headers_mut().insert(
+        "X-Slinger-MITM-Response",
+        HeaderValue::from_static("modified"),
+      );
+    }
 
     Ok(Some(response))
   }
@@ -70,6 +73,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
   let config = MitmConfig {
     ca_storage_path: std::path::PathBuf::from(".slinger-mitm-custom"),
     enable_https_interception: true,
+    enable_tcp_interception: false,
     max_connections: 1000,
     connection_timeout: 30,
     upstream_proxy: None,
