@@ -6,7 +6,6 @@ description = "An HTTP Client for Rust designed for hackers."
 homepage.workspace = true
 repository.workspace = true
 authors.workspace = true
-readme = "../README.md"
 license.workspace = true
 
 
