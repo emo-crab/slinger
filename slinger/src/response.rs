@@ -16,7 +16,9 @@ use http::{Method, Response as HttpResponse};
 use mime::Mime;
 #[cfg(feature = "gzip")]
 use std::io::Read;
-use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, BufReader};
+use std::pin::Pin;
+use std::task::{Context, Poll};
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncRead, AsyncReadExt, BufReader, ReadBuf};
 use tokio::time::{timeout, Duration};
 
 /// A Response to a submitted `Request`.
@@ -425,6 +427,391 @@ impl Response {
   }
 }
 
+/// A streaming HTTP response that allows the body to be read like a BufReader.
+///
+/// This struct is returned by [`ResponseBuilder::build_streaming()`] and provides
+/// access to the HTTP response headers and status code while allowing the body
+/// to be read in a streaming fashion. This is useful for:
+///
+/// - Reading large response bodies without loading them entirely into memory
+/// - Processing response data incrementally
+/// - Having more control over how and when the body is read
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use slinger::{Client, ResponseBuilder, ResponseConfig};
+/// use tokio::io::AsyncBufReadExt;
+///
+/// async fn streaming_example() -> Result<(), Box<dyn std::error::Error>> {
+///     // After getting a streaming response...
+///     let mut streaming = response_builder.build_streaming().await?;
+///     
+///     // Access headers and status without reading body
+///     println!("Status: {}", streaming.status_code());
+///     println!("Headers: {:?}", streaming.headers());
+///     
+///     // Read body line by line
+///     let mut line = String::new();
+///     while streaming.read_line(&mut line).await? > 0 {
+///         println!("Line: {}", line);
+///         line.clear();
+///     }
+///     
+///     // Or consume the response and get remaining socket
+///     let (response, socket) = streaming.finish().await?;
+///     
+///     Ok(())
+/// }
+/// ```
+#[derive(Debug)]
+pub struct StreamingResponse<T: AsyncRead + AsyncReadExt + Unpin> {
+  /// The HTTP version of the response.
+  pub version: http::Version,
+  /// The status code of the response.
+  pub status_code: http::StatusCode,
+  /// The headers of the response.
+  pub headers: http::HeaderMap<http::HeaderValue>,
+  /// The extensions associated with the response.
+  pub extensions: http::Extensions,
+  /// The buffered reader for streaming body access.
+  reader: BufReader<T>,
+  /// Configuration for reading the response.
+  config: ResponseConfig,
+}
+
+/// Accessor methods for StreamingResponse
+impl<T: AsyncRead + AsyncReadExt + Unpin + Sized> StreamingResponse<T> {
+  /// Get the `StatusCode` of this `StreamingResponse`.
+  #[inline]
+  pub fn status_code(&self) -> http::StatusCode {
+    self.status_code
+  }
+
+  /// Get the HTTP `Version` of this `StreamingResponse`.
+  #[inline]
+  pub fn version(&self) -> http::Version {
+    self.version
+  }
+
+  /// Get the `Headers` of this `StreamingResponse`.
+  #[inline]
+  pub fn headers(&self) -> &http::HeaderMap {
+    &self.headers
+  }
+
+  /// Get a mutable reference to the `Headers` of this `StreamingResponse`.
+  #[inline]
+  pub fn headers_mut(&mut self) -> &mut http::HeaderMap {
+    &mut self.headers
+  }
+
+  /// Get the content-length of the response, if it is known.
+  pub fn content_length(&self) -> Option<u64> {
+    self
+      .headers
+      .get(http::header::CONTENT_LENGTH)
+      .and_then(|x| x.to_str().ok()?.parse().ok())
+  }
+
+  /// Returns a reference to the associated extensions.
+  pub fn extensions(&self) -> &http::Extensions {
+    &self.extensions
+  }
+
+  /// Returns a mutable reference to the associated extensions.
+  pub fn extensions_mut(&mut self) -> &mut http::Extensions {
+    &mut self.extensions
+  }
+
+  /// Get a reference to the underlying buffered reader.
+  ///
+  /// This allows direct access to the reader for advanced use cases.
+  #[inline]
+  pub fn reader(&self) -> &BufReader<T> {
+    &self.reader
+  }
+
+  /// Get a mutable reference to the underlying buffered reader.
+  ///
+  /// This allows direct access to the reader for advanced use cases.
+  #[inline]
+  pub fn reader_mut(&mut self) -> &mut BufReader<T> {
+    &mut self.reader
+  }
+}
+
+/// BufReader-like streaming read methods
+impl<T: AsyncRead + AsyncReadExt + Unpin + Sized> StreamingResponse<T> {
+  /// Read data from the response body into the provided buffer.
+  ///
+  /// Returns the number of bytes read, or 0 if EOF has been reached.
+  ///
+  /// # Example
+  ///
+  /// ```rust,ignore
+  /// let mut buf = [0u8; 1024];
+  /// let n = streaming.read(&mut buf).await?;
+  /// println!("Read {} bytes", n);
+  /// ```
+  pub async fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
+    if let Some(to) = self.config.timeout {
+      timeout(to, self.reader.read(buf))
+        .await
+        .map_err(|e| Error::IO(std::io::Error::new(std::io::ErrorKind::TimedOut, e)))?
+        .map_err(Error::IO)
+    } else {
+      self.reader.read(buf).await.map_err(Error::IO)
+    }
+  }
+
+  /// Read the exact number of bytes required to fill the buffer.
+  ///
+  /// # Errors
+  ///
+  /// Returns an error if EOF is reached before the buffer is filled.
+  pub async fn read_exact(&mut self, buf: &mut [u8]) -> Result<usize> {
+    if let Some(to) = self.config.timeout {
+      timeout(to, self.reader.read_exact(buf))
+        .await
+        .map_err(|e| Error::IO(std::io::Error::new(std::io::ErrorKind::TimedOut, e)))?
+        .map_err(Error::IO)
+    } else {
+      self.reader.read_exact(buf).await.map_err(Error::IO)
+    }
+  }
+
+  /// Read all bytes until a newline (0xA) is reached, and append them to the provided buffer.
+  ///
+  /// Returns the number of bytes read, including the newline.
+  pub async fn read_line(&mut self, buf: &mut String) -> Result<usize> {
+    if let Some(to) = self.config.timeout {
+      timeout(to, self.reader.read_line(buf))
+        .await
+        .map_err(|e| Error::IO(std::io::Error::new(std::io::ErrorKind::TimedOut, e)))?
+        .map_err(Error::IO)
+    } else {
+      self.reader.read_line(buf).await.map_err(Error::IO)
+    }
+  }
+
+  /// Read all bytes until the delimiter is reached, and append them to the provided buffer.
+  ///
+  /// Returns the number of bytes read, including the delimiter.
+  pub async fn read_until(&mut self, delimiter: u8, buf: &mut Vec<u8>) -> Result<usize> {
+    if let Some(to) = self.config.timeout {
+      timeout(to, self.reader.read_until(delimiter, buf))
+        .await
+        .map_err(|e| Error::IO(std::io::Error::new(std::io::ErrorKind::TimedOut, e)))?
+        .map_err(Error::IO)
+    } else {
+      self.reader.read_until(delimiter, buf).await.map_err(Error::IO)
+    }
+  }
+
+  /// Read all bytes until EOF, placing them into the provided buffer.
+  ///
+  /// Returns the number of bytes read.
+  pub async fn read_to_end(&mut self, buf: &mut Vec<u8>) -> Result<usize> {
+    if let Some(to) = self.config.timeout {
+      timeout(to, self.reader.read_to_end(buf))
+        .await
+        .map_err(|e| Error::IO(std::io::Error::new(std::io::ErrorKind::TimedOut, e)))?
+        .map_err(Error::IO)
+    } else {
+      self.reader.read_to_end(buf).await.map_err(Error::IO)
+    }
+  }
+
+  /// Read all bytes until EOF, placing them into the provided string buffer.
+  ///
+  /// Returns the number of bytes read.
+  pub async fn read_to_string(&mut self, buf: &mut String) -> Result<usize> {
+    if let Some(to) = self.config.timeout {
+      timeout(to, self.reader.read_to_string(buf))
+        .await
+        .map_err(|e| Error::IO(std::io::Error::new(std::io::ErrorKind::TimedOut, e)))?
+        .map_err(Error::IO)
+    } else {
+      self.reader.read_to_string(buf).await.map_err(Error::IO)
+    }
+  }
+}
+
+/// Response conversion methods
+impl<T: AsyncRead + AsyncReadExt + Unpin + Sized> StreamingResponse<T> {
+  /// Consume the streaming response and read the remaining body, returning a complete `Response`.
+  ///
+  /// This is useful when you want to convert a streaming response to a regular response
+  /// after inspecting the headers.
+  ///
+  /// # Example
+  ///
+  /// ```rust,ignore
+  /// let mut streaming = response_builder.build_streaming().await?;
+  /// 
+  /// // Check status code first
+  /// if streaming.status_code().is_success() {
+  ///     // Only read the body if successful
+  ///     let (response, socket) = streaming.finish().await?;
+  ///     println!("Body: {:?}", response.body());
+  /// }
+  /// ```
+  pub async fn finish(mut self) -> Result<(Response, T)>
+  where
+    T: Send,
+  {
+    let body = read_body(&mut self.reader, &self.headers, &self.config).await?;
+    let response = Response {
+      version: self.version,
+      uri: http::Uri::default(),
+      status_code: self.status_code,
+      headers: self.headers,
+      extensions: self.extensions,
+      body: if body.is_empty() { None } else { Some(body.into()) },
+    };
+    let socket = self.reader.into_inner();
+    Ok((response, socket))
+  }
+}
+
+/// Implement `AsyncRead` for `StreamingResponse` to allow using it directly with async readers.
+impl<T: AsyncRead + AsyncReadExt + Unpin + Sized> AsyncRead for StreamingResponse<T> {
+  fn poll_read(
+    mut self: Pin<&mut Self>,
+    cx: &mut Context<'_>,
+    buf: &mut ReadBuf<'_>,
+  ) -> Poll<std::io::Result<()>> {
+    Pin::new(&mut self.reader).poll_read(cx, buf)
+  }
+}
+
+/// Implement `AsyncBufRead` for `StreamingResponse` to allow buffered reading operations.
+impl<T: AsyncRead + AsyncReadExt + Unpin + Sized> AsyncBufRead for StreamingResponse<T> {
+  fn poll_fill_buf(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<&[u8]>> {
+    Pin::new(&mut self.get_mut().reader).poll_fill_buf(cx)
+  }
+
+  fn consume(mut self: Pin<&mut Self>, amt: usize) {
+    Pin::new(&mut self.reader).consume(amt)
+  }
+}
+
+// ============================================================================
+// Shared helper functions for body reading
+// ============================================================================
+
+/// Read HTTP body based on headers and configuration.
+/// This is used by both `StreamingResponse::finish()` and `ResponseBuilder::build()`.
+async fn read_body<R: AsyncRead + AsyncBufRead + Unpin>(
+  reader: &mut R,
+  headers: &http::HeaderMap,
+  config: &ResponseConfig,
+) -> Result<Vec<u8>> {
+  let mut body = Vec::new();
+  if matches!(config.method, Method::HEAD) {
+    return Ok(body);
+  }
+  let mut content_length: Option<u64> = headers.get(http::header::CONTENT_LENGTH).and_then(|x| {
+    x.to_str()
+      .ok()?
+      .parse()
+      .ok()
+      .and_then(|l| if l == 0 { None } else { Some(l) })
+  });
+  if config.unsafe_response {
+    content_length = None;
+  }
+  if let Some(te) = headers.get(http::header::TRANSFER_ENCODING) {
+    if te == "chunked" {
+      body = read_chunked_body(reader).await?;
+    }
+  } else {
+    let limits = content_length.map(|x| {
+      if let Some(max) = config.max_read {
+        std::cmp::min(x, max)
+      } else {
+        x
+      }
+    });
+    let mut buffer = vec![0; 12];
+    let mut total_bytes_read = 0;
+    let timeout_duration = config.timeout;
+    loop {
+      let size = if let Some(to) = timeout_duration {
+        match tokio::time::timeout(to, reader.read(&mut buffer)).await {
+          Ok(size) => size,
+          Err(_) => break,
+        }
+      } else {
+        reader.read(&mut buffer).await
+      };
+      match size {
+        Ok(0) => break,
+        Ok(n) => {
+          body.extend_from_slice(&buffer[..n]);
+          total_bytes_read += n;
+        }
+        Err(ref err) if err.kind() == std::io::ErrorKind::WouldBlock => {
+          if total_bytes_read > 0 {
+            break;
+          }
+        }
+        Err(_err) => break,
+      }
+      if let Some(limit) = limits {
+        if total_bytes_read >= limit as usize {
+          break;
+        }
+      }
+    }
+  }
+  #[cfg(feature = "gzip")]
+  if let Some(ce) = headers.get(http::header::CONTENT_ENCODING) {
+    if ce == "gzip" {
+      let mut gzip_body = Vec::new();
+      let mut d = MultiGzDecoder::new(&body[..]);
+      d.read_to_end(&mut gzip_body)?;
+      body = gzip_body;
+    }
+  }
+  Ok(body)
+}
+
+/// Read chunked transfer encoding body.
+async fn read_chunked_body<R: AsyncRead + Unpin>(reader: &mut R) -> Result<Vec<u8>> {
+  let mut body: Vec<u8> = Vec::new();
+  loop {
+    let mut chunk: String = String::new();
+    loop {
+      let mut one_byte = vec![0; 1];
+      reader.read_exact(&mut one_byte).await?;
+      if one_byte[0] != 10 && one_byte[0] != 13 {
+        chunk.push(one_byte[0] as char);
+        break;
+      }
+    }
+    loop {
+      let mut one_byte = vec![0; 1];
+      reader.read_exact(&mut one_byte).await?;
+      if one_byte[0] == 10 || one_byte[0] == 13 {
+        reader.read_exact(&mut one_byte).await?;
+        break;
+      } else {
+        chunk.push(one_byte[0] as char)
+      }
+    }
+    if chunk == "0" || chunk.is_empty() {
+      break;
+    }
+    let chunk = usize::from_str_radix(&chunk, 16)?;
+    let mut chunk_of_bytes = vec![0; chunk];
+    reader.read_exact(&mut chunk_of_bytes).await?;
+    body.append(&mut chunk_of_bytes);
+  }
+  Ok(body)
+}
+
 /// A builder to construct the properties of a `Response`.
 ///
 /// To construct a `ResponseBuilder`, refer to the `Client` documentation.
@@ -549,129 +936,75 @@ impl<T: AsyncRead + Unpin + Sized> ResponseBuilder<T> {
     }
     Ok(headers)
   }
-  async fn read_body(&mut self, header: &http::HeaderMap) -> Result<Vec<u8>> {
-    let mut body = Vec::new();
-    if matches!(self.config.method, Method::HEAD) {
-      return Ok(body);
-    }
-    let mut content_length: Option<u64> = header.get(http::header::CONTENT_LENGTH).and_then(|x| {
-      x.to_str()
-        .ok()?
-        .parse()
-        .ok()
-        .and_then(|l| if l == 0 { None } else { Some(l) })
-    });
-    if self.config.unsafe_response {
-      content_length = None;
-    }
-    if let Some(te) = header.get(http::header::TRANSFER_ENCODING) {
-      if te == "chunked" {
-        body = self.read_chunked_body().await?;
-      }
-    } else {
-      let limits = content_length.map(|x| {
-        if let Some(max) = self.config.max_read {
-          std::cmp::min(x, max)
-        } else {
-          x
-        }
-      });
-      let mut buffer = vec![0; 12]; // 定义一个缓冲区
-      let mut total_bytes_read = 0;
-      let timeout = self.config.timeout;
-      loop {
-        let size = if let Some(to) = timeout {
-          match tokio::time::timeout(to, self.reader.read(&mut buffer)).await {
-            Ok(size) => size,
-            Err(_) => break,
-          }
-        } else {
-          self.reader.read(&mut buffer).await
-        };
-        match size {
-          Ok(0) => break,
-          Ok(n) => {
-            body.extend_from_slice(&buffer[..n]);
-            total_bytes_read += n;
-            // 当有读取到数据的时候重置计时器
-          }
-          Err(ref err) if err.kind() == std::io::ErrorKind::WouldBlock => {
-            // 如果没有数据可读，但超时尚未到达，可以在这里等待或重试
-            // 当已经有数据了或者触发超时就跳出循环，防止防火墙一直把会话挂着不释放
-            if total_bytes_read > 0 {
-              break;
-            }
-          }
-          Err(_err) => break,
-        }
-        // 检查是否读取到了全部数据，如果是，则退出循环
-        if let Some(limit) = limits {
-          if total_bytes_read >= limit as usize {
-            break;
-          }
-        }
-      }
-    }
-    #[cfg(feature = "gzip")]
-    if let Some(ce) = header.get(http::header::CONTENT_ENCODING) {
-      if ce == "gzip" {
-        let mut gzip_body = Vec::new();
-        let mut d = MultiGzDecoder::new(&body[..]);
-        d.read_to_end(&mut gzip_body)?;
-        body = gzip_body;
-      }
-    }
-    Ok(body)
-  }
-
-  async fn read_chunked_body(&mut self) -> Result<Vec<u8>> {
-    let mut body: Vec<u8> = Vec::new();
-    loop {
-      let mut chunk: String = String::new();
-      loop {
-        let mut one_byte = vec![0; 1];
-        self.reader.read_exact(&mut one_byte).await?;
-        if one_byte[0] != 10 && one_byte[0] != 13 {
-          chunk.push(one_byte[0] as char);
-          break;
-        }
-      }
-      loop {
-        let mut one_byte = vec![0; 1];
-        self.reader.read_exact(&mut one_byte).await?;
-        if one_byte[0] == 10 || one_byte[0] == 13 {
-          self.reader.read_exact(&mut one_byte).await?;
-          break;
-        } else {
-          chunk.push(one_byte[0] as char)
-        }
-      }
-      if chunk == "0" || chunk.is_empty() {
-        break;
-      }
-      let chunk = usize::from_str_radix(&chunk, 16)?;
-      let mut chunk_of_bytes = vec![0; chunk];
-      self.reader.read_exact(&mut chunk_of_bytes).await?;
-      body.append(&mut chunk_of_bytes);
-    }
-    Ok(body)
-  }
 
   /// Build a `Response`, which can be inspected, modified and executed with
   /// `Client::execute()`.
   pub async fn build(mut self) -> Result<(Response, T)> {
     let (v, c) = self.parser_version().await?;
     self.builder = self.builder.version(v).status(c);
-    let header = self.read_headers().await?;
-    // 读取body
-    let body = self.read_body(&header).await?;
+    let headers = self.read_headers().await?;
+    // 读取body - 使用共享的body读取函数
+    let body = read_body(&mut self.reader, &headers, &self.config).await?;
     if let Some(h) = self.builder.headers_mut() {
-      *h = header;
+      *h = headers;
     }
     let resp = self.builder.body(body)?;
     let response = resp.into();
     let socket = self.reader.into_inner();
     Ok((response, socket))
+  }
+
+  /// Build a `StreamingResponse` that allows streaming body reads.
+  ///
+  /// Unlike [`build()`](Self::build), this method returns immediately after parsing
+  /// the status line and headers, without reading the body. This gives the caller
+  /// full control over how and when to read the body data.
+  ///
+  /// # Use Cases
+  ///
+  /// - Reading large response bodies without loading them entirely into memory
+  /// - Processing response data incrementally as it arrives
+  /// - Deciding whether to read the body based on status code or headers
+  /// - Implementing custom body handling logic
+  ///
+  /// # Example
+  ///
+  /// ```rust,ignore
+  /// use slinger::{ResponseBuilder, ResponseConfig};
+  /// use tokio::io::AsyncBufReadExt;
+  ///
+  /// async fn stream_body() -> Result<(), Box<dyn std::error::Error>> {
+  ///     // Assuming you have a reader and config...
+  ///     let builder = ResponseBuilder::new(reader, config);
+  ///     
+  ///     // Get streaming response - body not read yet
+  ///     let mut streaming = builder.build_streaming().await?;
+  ///     
+  ///     // Check headers first
+  ///     if streaming.status_code().is_success() {
+  ///         // Read body line by line
+  ///         let mut line = String::new();
+  ///         while streaming.read_line(&mut line).await? > 0 {
+  ///             process_line(&line);
+  ///             line.clear();
+  ///         }
+  ///     }
+  ///     
+  ///     Ok(())
+  /// }
+  /// # fn process_line(_: &str) {}
+  /// ```
+  pub async fn build_streaming(mut self) -> Result<StreamingResponse<T>> {
+    let (version, status_code) = self.parser_version().await?;
+    let headers = self.read_headers().await?;
+    Ok(StreamingResponse {
+      version,
+      status_code,
+      headers,
+      extensions: http::Extensions::new(),
+      reader: self.reader,
+      config: self.config,
+    })
   }
 }
 

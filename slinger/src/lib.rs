@@ -184,7 +184,7 @@ pub use http;
 pub use http_serde;
 pub use proxy::Proxy;
 pub use request::{RawRequest, Request, RequestBuilder};
-pub use response::{Response, ResponseBuilder, ResponseConfig};
+pub use response::{Response, ResponseBuilder, ResponseConfig, StreamingResponse};
 pub use socket::Socket;
 #[cfg(feature = "tls")]
 pub use socket::StreamWrapper;

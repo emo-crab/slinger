@@ -37,6 +37,7 @@ impl CustomTlsStream for MockTlsStream {
     None
   }
 }
+#[cfg(feature = "tls")]
 slinger::impl_tls_stream!(MockTlsStream, inner);
 #[cfg(feature = "tls")]
 /// Example custom TLS connector implementation
