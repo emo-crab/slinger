@@ -44,10 +44,7 @@ mod tests {
     assert_eq!(streaming.version(), http::Version::HTTP_11);
     assert!(streaming.headers().contains_key("content-type"));
     assert!(streaming.headers().contains_key("content-length"));
-    assert_eq!(
-      streaming.content_length(),
-      Some(body_content.len() as u64)
-    );
+    assert_eq!(streaming.content_length(), Some(body_content.len() as u64));
   }
 
   /// Test that streaming response can read body incrementally

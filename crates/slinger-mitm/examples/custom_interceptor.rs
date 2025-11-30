@@ -10,7 +10,9 @@
 
 use async_trait::async_trait;
 use http::HeaderValue;
-use slinger_mitm::{MitmConfig, MitmProxy, MitmRequest, MitmResponse, RequestInterceptor, ResponseInterceptor, Result};
+use slinger_mitm::{
+  MitmConfig, MitmProxy, MitmRequest, MitmResponse, RequestInterceptor, ResponseInterceptor, Result,
+};
 use std::sync::Arc;
 
 /// Custom request interceptor that adds a custom header
@@ -19,7 +21,10 @@ struct CustomHeaderInterceptor;
 #[async_trait]
 impl RequestInterceptor for CustomHeaderInterceptor {
   async fn intercept_request(&self, mut request: MitmRequest) -> Result<Option<MitmRequest>> {
-    println!("[CUSTOM] Intercepting request to: {}", request.destination());
+    println!(
+      "[CUSTOM] Intercepting request to: {}",
+      request.destination()
+    );
     println!("[CUSTOM] Timestamp: {}", request.timestamp());
 
     if request.is_http() {
@@ -52,8 +57,11 @@ impl ResponseInterceptor for ResponseModifierInterceptor {
     println!("[CUSTOM] Timestamp: {}", response.timestamp());
 
     if response.is_http() {
-      println!("[CUSTOM] HTTP Status: {}", response.response().status_code());
-      
+      println!(
+        "[CUSTOM] HTTP Status: {}",
+        response.response().status_code()
+      );
+
       // Add a custom header to the response
       response.response_mut().headers_mut().insert(
         "X-Slinger-MITM-Response",

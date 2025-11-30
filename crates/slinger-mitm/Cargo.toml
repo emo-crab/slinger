@@ -1,6 +1,6 @@
 [package]
 name = "slinger-mitm"
-version = "0.0.2"
+version = "0.0.3"
 edition.workspace = true
 description = "MITM proxy with transparent traffic interception using rustls backend for slinger"
 homepage.workspace = true
@@ -10,7 +10,7 @@ license.workspace = true
 
 [dependencies]
 # Core slinger library
-slinger = { version = "0.2.11", features = ["tls", "rustls", "http2"] }
+slinger = { features = ["tls", "rustls", "http2"], workspace = true }
 # Workspace dependencies
 thiserror.workspace = true
 http.workspace = true

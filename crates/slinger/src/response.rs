@@ -605,7 +605,11 @@ impl<T: AsyncRead + AsyncReadExt + Unpin + Sized> StreamingResponse<T> {
         .map_err(|e| Error::IO(std::io::Error::new(std::io::ErrorKind::TimedOut, e)))?
         .map_err(Error::IO)
     } else {
-      self.reader.read_until(delimiter, buf).await.map_err(Error::IO)
+      self
+        .reader
+        .read_until(delimiter, buf)
+        .await
+        .map_err(Error::IO)
     }
   }
 
@@ -649,7 +653,7 @@ impl<T: AsyncRead + AsyncReadExt + Unpin + Sized> StreamingResponse<T> {
   ///
   /// ```rust,ignore
   /// let mut streaming = response_builder.build_streaming().await?;
-  /// 
+  ///
   /// // Check status code first
   /// if streaming.status_code().is_success() {
   ///     // Only read the body if successful
@@ -668,7 +672,11 @@ impl<T: AsyncRead + AsyncReadExt + Unpin + Sized> StreamingResponse<T> {
       status_code: self.status_code,
       headers: self.headers,
       extensions: self.extensions,
-      body: if body.is_empty() { None } else { Some(body.into()) },
+      body: if body.is_empty() {
+        None
+      } else {
+        Some(body.into())
+      },
     };
     let socket = self.reader.into_inner();
     Ok((response, socket))

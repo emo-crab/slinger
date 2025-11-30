@@ -2,11 +2,11 @@
 //!
 #[cfg(feature = "rustls")]
 pub mod rustls;
-use std::ops::Deref;
-use tokio::io::{AsyncRead, AsyncWrite};
 use crate::Socket;
 #[cfg(feature = "rustls")]
 use std::io::{BufRead, BufReader};
+use std::ops::Deref;
+use tokio::io::{AsyncRead, AsyncWrite};
 /// Trait for custom TLS connector implementations.
 ///
 /// This trait allows users to implement their own TLS handshake logic when the `tls` feature
@@ -50,7 +50,7 @@ pub trait CustomTlsConnector: Send + Sync + 'static {
     &'a self,
     domain: &'a str,
     stream: Socket,
-  ) -> std::pin::Pin<Box<dyn std::future::Future<Output =crate::Result<Socket>> + Send + 'a>>;
+  ) -> std::pin::Pin<Box<dyn std::future::Future<Output = crate::Result<Socket>> + Send + 'a>>;
 }
 
 /// Macro to implement AsyncRead and AsyncWrite by delegating to an inner TlsStreamWrapper field
@@ -254,7 +254,10 @@ impl Certificate {
   }
 
   #[cfg(feature = "rustls")]
-  pub(crate) fn add_to_tls(self, root_cert_store: &mut tokio_rustls::rustls::RootCertStore) -> crate::Result<()> {
+  pub(crate) fn add_to_tls(
+    self,
+    root_cert_store: &mut tokio_rustls::rustls::RootCertStore,
+  ) -> crate::Result<()> {
     match self.original {
       Cert::Der(buf) => root_cert_store
         .add(buf.into())
@@ -356,23 +359,27 @@ impl Identity {
             Ok(Item::Pkcs8Key(key)) => sk.push(key.into()),
             Ok(Item::Sec1Key(key)) => sk.push(key.into()),
             Ok(_) => {
-              return Err(crate::errors::builder(tokio_rustls::rustls::Error::General(String::from(
-                "No valid certificate was found",
-              ))))
+              return Err(crate::errors::builder(
+                tokio_rustls::rustls::Error::General(String::from(
+                  "No valid certificate was found",
+                )),
+              ))
             }
             Err(_) => {
-              return Err(crate::errors::builder(tokio_rustls::rustls::Error::General(String::from(
-                "Invalid identity PEM file",
-              ))))
+              return Err(crate::errors::builder(
+                tokio_rustls::rustls::Error::General(String::from("Invalid identity PEM file")),
+              ))
             }
           }
         }
         if let (Some(sk), false) = (sk.pop(), certs.is_empty()) {
           (sk, certs)
         } else {
-          return Err(crate::errors::builder(tokio_rustls::rustls::Error::General(String::from(
-            "private key or certificate not found",
-          ))));
+          return Err(crate::errors::builder(
+            tokio_rustls::rustls::Error::General(String::from(
+              "private key or certificate not found",
+            )),
+          ));
         }
       };
       Ok(Identity {
@@ -393,7 +400,10 @@ impl Identity {
   #[cfg(feature = "rustls")]
   pub(crate) fn add_to_tls(
     self,
-    config_builder: tokio_rustls::rustls::ConfigBuilder<tokio_rustls::rustls::ClientConfig, tokio_rustls::rustls::client::WantsClientCert>,
+    config_builder: tokio_rustls::rustls::ConfigBuilder<
+      tokio_rustls::rustls::ClientConfig,
+      tokio_rustls::rustls::client::WantsClientCert,
+    >,
   ) -> crate::Result<tokio_rustls::rustls::ClientConfig> {
     let ClientCert::RustlsPem { key, certs } = self.inner;
     config_builder

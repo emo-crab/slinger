@@ -93,7 +93,9 @@ impl TlsConfig {
     }
     let provider = tokio_rustls::rustls::crypto::CryptoProvider::get_default()
       .cloned()
-      .unwrap_or_else(|| std::sync::Arc::new(tokio_rustls::rustls::crypto::ring::default_provider()));
+      .unwrap_or_else(|| {
+        std::sync::Arc::new(tokio_rustls::rustls::crypto::ring::default_provider())
+      });
     let signature_algorithms = provider.signature_verification_algorithms;
     let config_builder =
       tokio_rustls::rustls::ClientConfig::builder_with_provider(provider.clone())

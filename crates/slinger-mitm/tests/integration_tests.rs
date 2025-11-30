@@ -340,7 +340,10 @@ async fn test_unified_interceptor_handler() {
   assert_eq!(request.body().map(|b| b.len()).unwrap_or(0), 11);
 
   let result = handler.process_request(request).await;
-  assert!(result.is_ok(), "Failed to process TCP request through handler");
+  assert!(
+    result.is_ok(),
+    "Failed to process TCP request through handler"
+  );
   assert!(
     result.unwrap().is_some(),
     "TCP Request was blocked unexpectedly"
@@ -352,7 +355,10 @@ async fn test_unified_interceptor_handler() {
   assert_eq!(response.body().map(|b| b.len()).unwrap_or(0), 18);
 
   let result = handler.process_response(response).await;
-  assert!(result.is_ok(), "Failed to process TCP response through handler");
+  assert!(
+    result.is_ok(),
+    "Failed to process TCP response through handler"
+  );
   assert!(
     result.unwrap().is_some(),
     "TCP Response was blocked unexpectedly"
@@ -366,12 +372,16 @@ async fn test_mitm_request_with_source() {
   use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
   let source_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100)), 12345);
-  let request = MitmRequest::raw_tcp_with_source(source_addr, "target.com:80", Bytes::from("GET / HTTP/1.1"));
+  let request =
+    MitmRequest::raw_tcp_with_source(source_addr, "target.com:80", Bytes::from("GET / HTTP/1.1"));
 
   assert_eq!(request.destination(), "target.com:80");
   assert!(request.source().is_some());
   assert_eq!(request.source().unwrap(), source_addr);
-  assert_eq!(request.body().map(|b| b.as_ref()).unwrap_or(&[]), b"GET / HTTP/1.1");
+  assert_eq!(
+    request.body().map(|b| b.as_ref()).unwrap_or(&[]),
+    b"GET / HTTP/1.1"
+  );
   assert!(request.timestamp() > 0);
 }
 
@@ -381,11 +391,17 @@ async fn test_mitm_response_body_modification() {
   use slinger_mitm::MitmResponse;
 
   let mut response = MitmResponse::raw_tcp("server.com:443", Bytes::from("original data"));
-  assert_eq!(response.body().map(|b| b.as_ref()).unwrap_or(&[]), b"original data");
+  assert_eq!(
+    response.body().map(|b| b.as_ref()).unwrap_or(&[]),
+    b"original data"
+  );
 
   // Modify the body
   response.set_body(Bytes::from("modified data"));
-  assert_eq!(response.body().map(|b| b.as_ref()).unwrap_or(&[]), b"modified data");
+  assert_eq!(
+    response.body().map(|b| b.as_ref()).unwrap_or(&[]),
+    b"modified data"
+  );
   assert!(response.timestamp() > 0);
 }
 
