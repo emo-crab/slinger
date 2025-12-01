@@ -1,4 +1,6 @@
 use crate::connector::Connector;
+#[cfg(feature = "dns")]
+use crate::dns::DnsResolver;
 use crate::errors::{new_io_error, Error, ReplyError, Result};
 use crate::response::ResponseBuilder;
 use crate::socket::Socket;
@@ -287,10 +289,24 @@ impl HttpProxy {
 /// A particular scheme used for proxying requests.
 ///
 /// For example, SOCKS5
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct ProxySocket {
   target: http::Uri,
   proxy: Option<Proxy>,
+  #[cfg(feature = "dns")]
+  dns_resolver: Option<DnsResolver>,
+}
+
+impl PartialEq for ProxySocket {
+  /// Compares two ProxySocket instances for equality.
+  ///
+  /// Note: The `dns_resolver` field is intentionally excluded from comparison because
+  /// `DnsResolver` wraps `Arc<TokioResolver>` which doesn't implement `PartialEq`.
+  /// Two ProxySocket instances are considered equal if they have the same target and proxy,
+  /// regardless of their DNS resolver configuration.
+  fn eq(&self, other: &Self) -> bool {
+    self.target == other.target && self.proxy == other.proxy
+  }
 }
 
 impl ProxySocket {
@@ -299,11 +315,19 @@ impl ProxySocket {
     Self {
       target: target.clone(),
       proxy: proxy.clone(),
+      #[cfg(feature = "dns")]
+      dns_resolver: None,
     }
+  }
+  /// Set a custom DNS resolver for hostname resolution.
+  #[cfg(feature = "dns")]
+  pub fn dns_resolver(mut self, resolver: Option<DnsResolver>) -> Self {
+    self.dns_resolver = resolver;
+    self
   }
   /// Connects to a target server through a connector
   pub async fn conn_with_connector(self, connector: &Connector) -> Result<Socket> {
-    let addr = self.get_conn_addr()?;
+    let addr = self.get_conn_addr().await?;
     let mut socket = connector.connect_with_addr(addr).await?;
     match &self.proxy {
       None => {
@@ -361,7 +385,7 @@ impl ProxySocket {
       }
     }
   }
-  fn get_conn_addr(&self) -> Result<SocketAddr> {
+  async fn get_conn_addr(&self) -> Result<SocketAddr> {
     // 获取连接地址，如果有代理先返回代理地址
     match &self.proxy {
       None => {
@@ -373,6 +397,12 @@ impl ProxySocket {
           std::io::ErrorKind::InvalidData,
           "no port in url",
         ))?;
+        // Use custom DNS resolver if available
+        #[cfg(feature = "dns")]
+        if let Some(resolver) = &self.dns_resolver {
+          return resolver.resolve_one(original_host, port).await;
+        }
+        // Fallback to system DNS
         let target_addr = (original_host, port)
           .to_socket_addrs()?
           .next()

@@ -7,6 +7,8 @@ use std::time::Duration;
 
 #[cfg(feature = "cookie")]
 use crate::cookies;
+#[cfg(feature = "dns")]
+use crate::dns::DnsResolver;
 use crate::errors::{new_io_error, Result};
 use crate::proxy::Proxy;
 use crate::record::{HTTPRecord, RedirectRecord};
@@ -543,6 +545,12 @@ impl ClientBuilder {
         .connect_timeout(config.connect_timeout)
         .write_timeout(config.timeout);
       default_builder = default_builder.nodelay(config.nodelay);
+      #[cfg(feature = "dns")]
+      {
+        if let Some(resolver) = config.dns_resolver {
+          default_builder = default_builder.dns_resolver(resolver);
+        }
+      }
       #[cfg(feature = "tls")]
       {
         default_builder = default_builder
@@ -661,6 +669,38 @@ impl ClientBuilder {
   /// Adding a proxy will disable the automatic usage of the "system" proxy.
   pub fn proxy(mut self, proxy: Proxy) -> ClientBuilder {
     self.config.proxy = Some(proxy);
+    self
+  }
+  // DNS options
+
+  /// Set a custom DNS resolver for hostname resolution.
+  ///
+  /// This allows you to use custom DNS servers instead of the system's default DNS.
+  ///
+  /// # Optional
+  ///
+  /// This requires the optional `dns` feature to be enabled.
+  ///
+  /// # Example
+  ///
+  /// ```ignore
+  /// use slinger::{Client, dns::DnsResolver};
+  ///
+  /// # fn example() -> Result<(), slinger::Error> {
+  /// let resolver = DnsResolver::new(vec![
+  ///     "8.8.8.8:53".parse().unwrap(),
+  /// ])?;
+  ///
+  /// let client = Client::builder()
+  ///     .dns_resolver(resolver)
+  ///     .build()?;
+  /// # Ok(())
+  /// # }
+  /// ```
+  #[cfg(feature = "dns")]
+  #[cfg_attr(docsrs, doc(cfg(feature = "dns")))]
+  pub fn dns_resolver(mut self, resolver: DnsResolver) -> ClientBuilder {
+    self.config.dns_resolver = Some(resolver);
     self
   }
   // Timeout options
@@ -935,6 +975,8 @@ struct Config {
   proxy: Option<Proxy>,
   nodelay: bool,
   keepalive: bool,
+  #[cfg(feature = "dns")]
+  dns_resolver: Option<DnsResolver>,
   #[cfg(feature = "tls")]
   root_certs: Vec<Certificate>,
   #[cfg(feature = "tls")]
@@ -984,6 +1026,8 @@ impl Default for Config {
       proxy: None,
       nodelay: false,
       keepalive: false,
+      #[cfg(feature = "dns")]
+      dns_resolver: None,
       #[cfg(feature = "tls")]
       root_certs: vec![],
       #[cfg(feature = "tls")]

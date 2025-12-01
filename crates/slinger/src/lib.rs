@@ -115,11 +115,33 @@
 //!
 //! - **charset**: Improved support for decoding text.
 //! - **cookie**: Provides cookie session support.
+//! - **dns**: Provides custom DNS server support via hickory-dns.
 //! - **tls**: Base TLS feature flag. Enables TLS types and interfaces.
 //! - **rustls**: Provides HTTPS support via rustls (requires `tls` feature). This is the recommended TLS backend.
 //! - **serde**: Provides serialization and deserialization support.
 //! - **gzip**: Provides response body gzip decompression.
 //! - **http2**: Provides HTTP/2 support (requires a TLS backend).
+//!
+//! ### Custom DNS Resolution
+//!
+//! When the `dns` feature is enabled, you can use custom DNS servers for hostname resolution:
+//!
+//! ```ignore
+//! use slinger::{Client, dns::DnsResolver};
+//!
+//! # fn example() -> Result<(), slinger::Error> {
+//! // Create a resolver with Google's public DNS servers
+//! let resolver = DnsResolver::new(vec![
+//!     "8.8.8.8:53".parse().unwrap(),
+//!     "8.8.4.4:53".parse().unwrap(),
+//! ])?;
+//!
+//! let client = Client::builder()
+//!     .dns_resolver(resolver)
+//!     .build()?;
+//! # Ok(())
+//! # }
+//! ```
 //!
 //! ### TLS Backend Selection
 //!
@@ -159,6 +181,9 @@ mod client;
 mod connector;
 #[cfg(feature = "cookie")]
 mod cookies;
+#[cfg(feature = "dns")]
+/// DNS resolver module for custom DNS server support.
+pub mod dns;
 mod errors;
 #[cfg(feature = "http2")]
 mod h2_client;

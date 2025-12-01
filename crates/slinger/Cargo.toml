@@ -30,6 +30,7 @@ rustls-pki-types = { workspace = true, optional = true }
 rustls-native-certs = { workspace = true, optional = true }
 h2 = { version = "0.4", optional = true }
 schemars = { version = "1.1.0", optional = true, features = ["bytes1"] }
+hickory-resolver = { version = "0.25", optional = true }
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 futures = { version = "0.3.31" }
@@ -49,3 +50,4 @@ charset = ["dep:encoding_rs", "dep:mime"]
 serde = ["dep:serde", "http-serde"]
 gzip = ["flate2"]
 schema = ["dep:schemars", "serde"]
+dns = ["dep:hickory-resolver"]

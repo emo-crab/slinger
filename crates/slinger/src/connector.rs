@@ -1,6 +1,8 @@
 use crate::errors::Result;
 use crate::proxy::{Proxy, ProxySocket};
 use crate::socket::{Socket, StreamWrapper};
+#[cfg(feature = "dns")]
+use crate::dns::DnsResolver;
 #[cfg(feature = "tls")]
 use crate::tls::{self, Certificate, CustomTlsConnector, Identity};
 use socket2::Socket as RawSocket;
@@ -18,6 +20,8 @@ pub struct ConnectorBuilder {
   nodelay: bool,
   keepalive: bool,
   proxy: Option<Proxy>,
+  #[cfg(feature = "dns")]
+  dns_resolver: Option<DnsResolver>,
   #[cfg(feature = "tls")]
   tls_config: TlsConfig,
   #[cfg(feature = "tls")]
@@ -33,6 +37,8 @@ impl Default for ConnectorBuilder {
       nodelay: false,
       keepalive: false,
       proxy: None,
+      #[cfg(feature = "dns")]
+      dns_resolver: None,
       #[cfg(feature = "tls")]
       tls_config: TlsConfig::default(),
       #[cfg(feature = "tls")]
@@ -253,6 +259,35 @@ impl ConnectorBuilder {
     self.proxy = addr;
     self
   }
+  /// Set a custom DNS resolver for hostname resolution.
+  ///
+  /// This allows you to use custom DNS servers instead of the system's default DNS.
+  ///
+  /// # Optional
+  ///
+  /// This requires the optional `dns` feature to be enabled.
+  ///
+  /// # Example
+  ///
+  /// ```ignore
+  /// use slinger::{ConnectorBuilder, dns::DnsResolver};
+  ///
+  /// # fn example() -> Result<(), slinger::Error> {
+  /// let resolver = DnsResolver::new(vec![
+  ///     "8.8.8.8:53".parse().unwrap(),
+  /// ])?;
+  ///
+  /// let connector = ConnectorBuilder::default()
+  ///     .dns_resolver(resolver)
+  ///     .build()?;
+  /// # Ok(())
+  /// # }
+  /// ```
+  #[cfg(feature = "dns")]
+  pub fn dns_resolver(mut self, resolver: DnsResolver) -> ConnectorBuilder {
+    self.dns_resolver = Some(resolver);
+    self
+  }
   /// Set the minimum required TLS version for connections.
   ///
   /// By default, the `native_tls::Protocol` default is used.
@@ -350,6 +385,8 @@ impl ConnectorBuilder {
       read_timeout: self.read_timeout,
       write_timeout: self.write_timeout,
       proxy: self.proxy.clone(),
+      #[cfg(feature = "dns")]
+      dns_resolver: self.dns_resolver.clone(),
       #[cfg(feature = "tls")]
       tls,
     };
@@ -366,6 +403,8 @@ pub struct Connector {
   read_timeout: Option<Duration>,
   write_timeout: Option<Duration>,
   proxy: Option<Proxy>,
+  #[cfg(feature = "dns")]
+  dns_resolver: Option<DnsResolver>,
   #[cfg(feature = "tls")]
   tls: std::sync::Arc<dyn CustomTlsConnector>,
 }
@@ -406,9 +445,13 @@ impl Connector {
   }
   /// Connect to a remote endpoint with url
   pub async fn connect_with_uri(&self, target: &http::Uri) -> Result<Socket> {
-    ProxySocket::new(target, &self.proxy)
-      .conn_with_connector(self)
-      .await
+    #[allow(unused_mut)]
+    let mut proxy_socket = ProxySocket::new(target, &self.proxy);
+    #[cfg(feature = "dns")]
+    {
+      proxy_socket = proxy_socket.dns_resolver(self.dns_resolver.clone());
+    }
+    proxy_socket.conn_with_connector(self).await
   }
   #[cfg(feature = "tls")]
   /// A `Connector` will use transport layer security (TLS) by default to connect to destinations.
