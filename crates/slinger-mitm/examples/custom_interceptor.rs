@@ -1,7 +1,8 @@
 //! MITM proxy with custom traffic modification
 //!
 //! This example demonstrates how to create custom interceptors
-//! to modify HTTP requests and responses.
+//! to modify HTTP requests and responses, and how to use session_id
+//! to correlate requests with their responses.
 //!
 //! To run:
 //! ```bash
@@ -11,18 +12,63 @@
 use async_trait::async_trait;
 use http::HeaderValue;
 use slinger_mitm::{
-  MitmConfig, MitmProxy, MitmRequest, MitmResponse, RequestInterceptor, ResponseInterceptor, Result,
+  Interceptor, MitmConfig, MitmProxy, MitmRequest, MitmResponse, Result,
 };
 use std::sync::Arc;
 
-/// Custom request interceptor that adds a custom header
+/// Unified custom interceptor that handles both requests and responses
+/// This is the recommended approach - using the Interceptor trait
+struct UnifiedCustomInterceptor;
+
+#[async_trait]
+impl Interceptor for UnifiedCustomInterceptor {
+  async fn intercept_request(&self, mut request: MitmRequest) -> Result<Option<MitmRequest>> {
+    // Session ID is automatically managed - correlates with the response
+    println!(
+      "[UNIFIED] Intercepting request (session_id={}) to: {}",
+      request.session_id(),
+      request.destination()
+    );
+
+    if request.is_http() {
+      request
+        .request_mut()
+        .headers_mut()
+        .insert("X-Slinger-Unified", HeaderValue::from_static("true"));
+    }
+
+    Ok(Some(request))
+  }
+
+  async fn intercept_response(&self, mut response: MitmResponse) -> Result<Option<MitmResponse>> {
+    // This response's session_id matches the request's session_id automatically
+    println!(
+      "[UNIFIED] Intercepting response (session_id={}) from: {}",
+      response.session_id(),
+      response.source()
+    );
+
+    if response.is_http() {
+      response.response_mut().headers_mut().insert(
+        "X-Slinger-Unified-Response",
+        HeaderValue::from_static("modified"),
+      );
+    }
+
+    Ok(Some(response))
+  }
+}
+
+/// Legacy custom request interceptor (for backward compatibility example)
 struct CustomHeaderInterceptor;
 
 #[async_trait]
-impl RequestInterceptor for CustomHeaderInterceptor {
+impl Interceptor for CustomHeaderInterceptor {
   async fn intercept_request(&self, mut request: MitmRequest) -> Result<Option<MitmRequest>> {
+    // Use session_id to track and correlate this request with its response
     println!(
-      "[CUSTOM] Intercepting request to: {}",
+      "[CUSTOM] Intercepting request (session_id={}) to: {}",
+      request.session_id(),
       request.destination()
     );
     println!("[CUSTOM] Timestamp: {}", request.timestamp());
@@ -45,15 +91,13 @@ impl RequestInterceptor for CustomHeaderInterceptor {
 
     Ok(Some(request))
   }
-}
-
-/// Custom response interceptor that modifies response headers
-struct ResponseModifierInterceptor;
-
-#[async_trait]
-impl ResponseInterceptor for ResponseModifierInterceptor {
   async fn intercept_response(&self, mut response: MitmResponse) -> Result<Option<MitmResponse>> {
-    println!("[CUSTOM] Intercepting response from: {}", response.source());
+    // Use session_id to correlate this response with its original request
+    println!(
+      "[CUSTOM] Intercepting response (session_id={}) from: {}",
+      response.session_id(),
+      response.source()
+    );
     println!("[CUSTOM] Timestamp: {}", response.timestamp());
 
     if response.is_http() {
@@ -73,13 +117,14 @@ impl ResponseInterceptor for ResponseModifierInterceptor {
   }
 }
 
+
 #[tokio::main]
 async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
   println!("=== Slinger MITM Proxy with Custom Interceptors ===\n");
 
   // Create proxy with custom storage path
   let config = MitmConfig {
-    ca_storage_path: std::path::PathBuf::from(".slinger-mitm-custom"),
+    ca_storage_path: std::path::PathBuf::from(".slinger-mitm"),
     enable_https_interception: true,
     enable_tcp_interception: false,
     max_connections: 1000,
@@ -93,19 +138,29 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
   let interceptor_handler = proxy.interceptor_handler();
   let mut handler = interceptor_handler.write().await;
 
-  // Add our custom interceptors
-  handler.add_request_interceptor(Arc::new(CustomHeaderInterceptor));
-  handler.add_response_interceptor(Arc::new(ResponseModifierInterceptor));
+  // Recommended: Use unified interceptor (handles both request and response)
+  // Note: In production, use either unified OR legacy interceptors, not both.
+  // This example shows both approaches for demonstration purposes.
+  println!("Adding unified interceptor (recommended approach)");
+  handler.add_interceptor(Arc::new(UnifiedCustomInterceptor));
+  handler.add_interceptor(Arc::new(CustomHeaderInterceptor));
+
+  // Legacy: Separate request and response interceptors (for backward compatibility)
+  // Uncomment below if you need to use legacy interceptors instead:
+  // println!("Adding legacy separate interceptors (backward compatibility)");
+  // handler.add_request_interceptor(Arc::new(CustomHeaderInterceptor));
+  // handler.add_response_interceptor(Arc::new(ResponseModifierInterceptor));
 
   drop(handler); // Release write lock
 
   // Start the proxy
   println!("Starting MITM proxy on 127.0.0.1:8888");
   println!("CA certificate: {}\n", proxy.ca_cert_path().display());
-  println!("This proxy will:");
-  println!("  - Add X-Slinger-MITM header to all requests");
-  println!("  - Modify User-Agent header");
-  println!("  - Add X-Slinger-MITM-Response header to all responses\n");
+  println!("This proxy demonstrates:");
+  println!("  - Unified Interceptor (recommended): Handles both req & resp with automatic session correlation");
+  println!("  - Legacy separate interceptors: For backward compatibility");
+  println!("  - Session IDs automatically correlate requests with their responses");
+  println!("  - Custom headers added to demonstrate interception\n");
 
   proxy.start("127.0.0.1:8888").await?;
 

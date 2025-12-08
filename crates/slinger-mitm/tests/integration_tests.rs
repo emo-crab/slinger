@@ -182,14 +182,13 @@ async fn test_mitm_proxy_creation() {
 
 #[tokio::test]
 async fn test_interceptor_handler() {
-  use slinger_mitm::{Interceptor, InterceptorHandler, MitmRequest};
+  use slinger_mitm::{InterceptorFactory, InterceptorHandler, MitmRequest};
   use std::sync::Arc;
 
   let mut handler = InterceptorHandler::new();
 
   // Add interceptors
-  handler.add_request_interceptor(Arc::new(Interceptor::logging()));
-  handler.add_response_interceptor(Arc::new(Interceptor::logging()));
+  handler.add_interceptor(Arc::new(InterceptorFactory::logging()));
 
   // Test with a simple HTTP request
   use bytes::Bytes;
@@ -319,15 +318,13 @@ async fn test_socks5_target_addr() {
 #[tokio::test]
 async fn test_unified_interceptor_handler() {
   use bytes::Bytes;
-  use slinger_mitm::{Interceptor, InterceptorHandler, MitmRequest, MitmResponse};
+  use slinger_mitm::{InterceptorFactory, InterceptorHandler, MitmRequest, MitmResponse};
   use std::sync::Arc;
 
   let mut handler = InterceptorHandler::new();
 
   // Add interceptors (same interceptors handle both HTTP and TCP)
-  handler.add_request_interceptor(Arc::new(Interceptor::logging()));
-  handler.add_response_interceptor(Arc::new(Interceptor::logging()));
-
+  handler.add_interceptor(Arc::new(InterceptorFactory::logging()));
   // Verify interceptors are registered
   assert!(
     handler.has_interceptors(),
@@ -336,6 +333,7 @@ async fn test_unified_interceptor_handler() {
 
   // Test with a raw TCP request
   let request = MitmRequest::raw_tcp("example.com:443", Bytes::from("Hello, TCP!"));
+  let session_id = request.session_id();
   assert_eq!(request.destination(), "example.com:443");
   assert_eq!(request.body().map(|b| b.len()).unwrap_or(0), 11);
 
@@ -349,9 +347,10 @@ async fn test_unified_interceptor_handler() {
     "TCP Request was blocked unexpectedly"
   );
 
-  // Test with a raw TCP response
-  let response = MitmResponse::raw_tcp("example.com:443", Bytes::from("Hello from server!"));
+  // Test with a raw TCP response using the same session_id
+  let response = MitmResponse::raw_tcp(session_id, "example.com:443", Bytes::from("Hello from server!"));
   assert_eq!(response.source(), "example.com:443");
+  assert_eq!(response.session_id(), session_id);
   assert_eq!(response.body().map(|b| b.len()).unwrap_or(0), 18);
 
   let result = handler.process_response(response).await;
@@ -390,11 +389,12 @@ async fn test_mitm_response_body_modification() {
   use bytes::Bytes;
   use slinger_mitm::MitmResponse;
 
-  let mut response = MitmResponse::raw_tcp("server.com:443", Bytes::from("original data"));
+  let mut response = MitmResponse::raw_tcp(1, "server.com:443", Bytes::from("original data"));
   assert_eq!(
     response.body().map(|b| b.as_ref()).unwrap_or(&[]),
     b"original data"
   );
+  assert_eq!(response.session_id(), 1);
 
   // Modify the body
   response.set_body(Bytes::from("modified data"));
@@ -423,4 +423,57 @@ async fn test_mitm_request_is_http() {
   let request: slinger::Request = http_request.into();
   let mitm_request = MitmRequest::new("example.com:80", request);
   assert!(mitm_request.is_http(), "HTTP request should be detected");
+}
+
+#[tokio::test]
+async fn test_session_id_correlation() {
+  use bytes::Bytes;
+  use slinger_mitm::{MitmRequest, MitmResponse};
+
+  // Create a request and capture its session_id
+  let request = MitmRequest::raw_tcp("example.com:443", Bytes::from("Hello"));
+  let session_id = request.session_id();
+
+  // Verify the request has a valid session_id
+  assert!(session_id > 0, "Session ID should be positive");
+  assert_eq!(request.session_id(), session_id);
+
+  // Create a response with the same session_id
+  let response = MitmResponse::raw_tcp(session_id, "example.com:443", Bytes::from("World"));
+  assert_eq!(response.session_id(), session_id);
+
+  // Create another request and verify it gets a different session_id
+  let another_request = MitmRequest::raw_tcp("other.com:80", Bytes::from("Test"));
+  assert_ne!(
+    another_request.session_id(),
+    session_id,
+    "Different requests should have different session IDs"
+  );
+}
+
+#[tokio::test]
+async fn test_session_id_http_request_response() {
+  use bytes::Bytes;
+  use slinger_mitm::{MitmRequest, MitmResponse};
+
+  // Create an HTTP request
+  let http_request = http::Request::builder()
+    .method("GET")
+    .uri("http://example.com/api/test")
+    .body(Bytes::new())
+    .unwrap();
+  let request: slinger::Request = http_request.into();
+  let mitm_request = MitmRequest::new("example.com:80", request);
+
+  // Capture session_id
+  let session_id = mitm_request.session_id();
+  assert!(mitm_request.is_http());
+
+  // Create a corresponding HTTP response with the same session_id
+  let http_response = slinger::Response::default();
+  let mitm_response = MitmResponse::new(session_id, "example.com:80", http_response);
+
+  // Verify they share the same session_id for correlation
+  assert_eq!(mitm_response.session_id(), session_id);
+  assert!(mitm_response.is_http());
 }

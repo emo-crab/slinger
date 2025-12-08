@@ -16,20 +16,20 @@
 //! - Modifying TCP request data before forwarding
 //! - Intercepting raw TCP response data
 //! - Modifying TCP response data before returning to client
+//! - Using session_id to correlate requests and responses
 
 use async_trait::async_trait;
-use slinger_mitm::{
-  Interceptor, MitmConfig, MitmProxy, MitmRequest, MitmResponse, RequestInterceptor,
-  ResponseInterceptor, Result,
-};
+use slinger_mitm::{Interceptor, InterceptorFactory, MitmConfig, MitmProxy, MitmRequest, MitmResponse, Result};
 use std::sync::Arc;
 
 /// Custom interceptor that logs and optionally modifies requests/responses
 struct CustomInterceptor;
 
 #[async_trait]
-impl RequestInterceptor for CustomInterceptor {
+impl Interceptor for CustomInterceptor {
   async fn intercept_request(&self, request: MitmRequest) -> Result<Option<MitmRequest>> {
+    // session_id allows you to correlate this request with its response
+    println!("[REQ] Session ID: {}", request.session_id());
     println!("[REQ] Destination: {}", request.destination());
     if let Some(source) = request.source() {
       println!("[REQ] Source: {}", source);
@@ -54,11 +54,9 @@ impl RequestInterceptor for CustomInterceptor {
     println!("---");
     Ok(Some(request))
   }
-}
-
-#[async_trait]
-impl ResponseInterceptor for CustomInterceptor {
   async fn intercept_response(&self, response: MitmResponse) -> Result<Option<MitmResponse>> {
+    // session_id allows you to correlate this response with its original request
+    println!("[RSP] Session ID: {}", response.session_id());
     println!("[RSP] Source: {}", response.source());
     if let Some(destination) = response.destination() {
       println!("[RSP] Destination: {}", destination);
@@ -105,13 +103,9 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
   let mut handler = interceptor_handler.write().await;
 
   // Add HTTP interceptors (for HTTP traffic if any)
-  handler.add_request_interceptor(Arc::new(Interceptor::logging()));
-  handler.add_response_interceptor(Arc::new(Interceptor::logging()));
-
+  handler.add_interceptor(Arc::new(InterceptorFactory::logging()));
   // Add custom interceptor for both HTTP and TCP traffic
-  handler.add_request_interceptor(Arc::new(CustomInterceptor));
-  handler.add_response_interceptor(Arc::new(CustomInterceptor));
-
+  handler.add_interceptor(Arc::new(CustomInterceptor));
   drop(handler); // Release write lock
 
   // Start the proxy
@@ -122,7 +116,8 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
   println!("2. The proxy will intercept and log all traffic (HTTP and raw TCP)");
   println!("3. Request/response data with metadata will be shown in the console\n");
   println!("Features:");
-  println!("- MitmRequest/MitmResponse contain: source/destination, timestamp, body");
+  println!("- MitmRequest/MitmResponse contain: session_id, source/destination, timestamp, body");
+  println!("- session_id allows you to correlate requests with their responses");
   println!("- Same interceptor handles both HTTP and non-HTTP protocols");
   println!("- Use is_http() to detect protocol type\n");
 

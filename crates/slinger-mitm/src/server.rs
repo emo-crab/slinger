@@ -457,8 +457,14 @@ impl ProxyServer {
     peer_addr: SocketAddr,
     interceptor: Arc<RwLock<InterceptorHandler>>,
   ) -> Result<()> {
+    use uuid::Uuid;
+
     let (host, port) = Self::parse_host_port(target_addr)?;
     let addr = format!("{}:{}", host, port);
+
+    // Generate a session ID for this TCP connection using UUID
+    // All requests and responses for this connection will share this session_id
+    let connection_session_id = Uuid::new_v4().as_u128();
 
     // Connect to target server
     let target_stream = TcpStream::connect(&addr)
@@ -479,7 +485,10 @@ impl ProxyServer {
           Ok(0) => break, // Connection closed
           Ok(n) => {
             let data = Bytes::copy_from_slice(&buffer[..n]);
-            let request = MitmRequest::raw_tcp_with_source(peer_addr, &target_addr_clone, data);
+            let mut request =
+              MitmRequest::raw_tcp_with_source(peer_addr, &target_addr_clone, data);
+            // Override the auto-generated session_id with the connection's session_id
+            request.set_session_id(connection_session_id);
 
             // Process through interceptors
             let handler = interceptor_clone.read().await;
@@ -519,7 +528,9 @@ impl ProxyServer {
           Ok(0) => break, // Connection closed
           Ok(n) => {
             let data = Bytes::copy_from_slice(&buffer[..n]);
-            let response = MitmResponse::raw_tcp_with_destination(&addr, peer_addr, data);
+            // Use the same connection_session_id to correlate with requests
+            let response =
+              MitmResponse::raw_tcp_with_destination(connection_session_id, &addr, peer_addr, data);
 
             // Process through interceptors
             let handler = interceptor.read().await;
@@ -570,6 +581,8 @@ impl ProxyServer {
   ) -> Result<Option<Vec<u8>>> {
     let handler = interceptor.read().await;
     let mitm_request = MitmRequest::new(destination, request);
+    // Store the session_id to correlate with the response
+    let session_id = mitm_request.session_id();
     if let Some(modified_req) = handler.process_request(mitm_request).await? {
       let inner_req = modified_req.request();
       let uri = inner_req.uri().clone();
@@ -587,7 +600,8 @@ impl ProxyServer {
       req_builder = req_builder.body(body_data);
       match req_builder.send().await {
         Ok(response) => {
-          let mitm_response = MitmResponse::new(destination, response);
+          // Pass the session_id from request to response for correlation
+          let mitm_response = MitmResponse::new(session_id, destination, response);
           if let Some(final_response) = handler.process_response(mitm_response).await? {
             let response_bytes = Self::serialize_http_response(final_response.response())?;
             return Ok(Some(response_bytes));

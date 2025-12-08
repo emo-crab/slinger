@@ -11,7 +11,7 @@
 //! Then configure your browser to use the proxy at 127.0.0.1:8080
 //! Install the CA certificate from .slinger-mitm/ca_cert.pem
 
-use slinger_mitm::{Interceptor, MitmConfig, MitmProxy};
+use slinger_mitm::{InterceptorFactory, MitmConfig, MitmProxy};
 use std::sync::Arc;
 
 #[tokio::main]
@@ -25,8 +25,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
   // Add a logging interceptor to see traffic
   let interceptor_handler = proxy.interceptor_handler();
   let mut handler = interceptor_handler.write().await;
-  handler.add_request_interceptor(Arc::new(Interceptor::logging()));
-  handler.add_response_interceptor(Arc::new(Interceptor::logging()));
+  handler.add_interceptor(Arc::new(InterceptorFactory::logging()));
   drop(handler); // Release write lock
 
   // Start the proxy
