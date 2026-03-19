@@ -6,7 +6,7 @@
 
 use crate::error::{Error, Result};
 use moka::future::Cache;
-use rand::Rng;
+use rand::RngExt;
 use rcgen::{
   BasicConstraints, CertificateParams, DistinguishedName, DnType, IsCa, Issuer, KeyPair,
   KeyUsagePurpose, SanType,
