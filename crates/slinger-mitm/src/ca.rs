@@ -212,10 +212,11 @@ impl CertificateAuthority {
   }
 
   /// Get CA certificate in PEM format for client installation
-  pub fn ca_cert_pem(&self) -> Result<String> {
+  pub async fn ca_cert_pem(&self) -> Result<String> {
     // Read the saved certificate file
     let ca_cert_path = self.storage_path.join("ca_cert.pem");
-    std::fs::read_to_string(&ca_cert_path)
+    tokio::fs::read_to_string(&ca_cert_path)
+      .await
       .map_err(|e| Error::certificate_error(format!("Failed to read CA cert: {}", e)))
   }
 
@@ -288,9 +289,9 @@ impl CertificateManager {
     Ok((cert_chain, key))
   }
 
-  /// Get the CA certificate in PEM format
-  pub fn ca_cert_pem(&self) -> Result<String> {
-    self.ca.ca_cert_pem()
+  /// Get the CA certificate in PEM format (async). Synchronous API removed.
+  pub async fn ca_cert_pem(&self) -> Result<String> {
+    self.ca.ca_cert_pem().await
   }
 
   /// Get the CA certificate path

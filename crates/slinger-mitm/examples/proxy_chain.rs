@@ -59,6 +59,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     enable_tcp_interception: false,
     max_connections: 1000,
     connection_timeout: 30,
+    interceptor_timeout_secs: 60,
     upstream_proxy: proxy,
   };
 

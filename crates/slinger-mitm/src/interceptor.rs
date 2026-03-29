@@ -8,6 +8,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
+use tokio::time::timeout;
 
 /// Generate a new unique session ID using UUID v4
 fn generate_session_id() -> u128 {
@@ -355,6 +356,8 @@ pub trait Interceptor: Send + Sync {
 /// Manages automatic correlation between requests and responses via session IDs
 pub struct InterceptorHandler {
   interceptors: Vec<Arc<dyn Interceptor>>,
+  /// Per-interceptor timeout in seconds
+  timeout_secs: u64,
 }
 
 impl InterceptorHandler {
@@ -362,7 +365,14 @@ impl InterceptorHandler {
   pub fn new() -> Self {
     Self {
       interceptors: Vec::new(),
+      timeout_secs: 60,
     }
+  }
+
+  /// Create a new interceptor handler with a configurable per-interceptor timeout
+  pub fn with_timeout(mut self,timeout_secs: u64) -> Self {
+    self.timeout_secs=timeout_secs;
+    self
   }
 
   /// Add a unified interceptor that handles both requests and responses
@@ -376,9 +386,24 @@ impl InterceptorHandler {
   pub async fn process_request(&self, mut request: MitmRequest) -> Result<Option<MitmRequest>> {
     // Process through unified interceptors first
     for interceptor in &self.interceptors {
-      match interceptor.intercept_request(request).await? {
-        Some(modified) => request = modified,
-        None => return Ok(None), // Request blocked
+      // Clone the request so a timed-out interceptor doesn't consume ownership
+      // of the in-band request. Dashed interceptor results will replace `request`.
+      let request_clone = request.clone();
+      match timeout(
+        std::time::Duration::from_secs(self.timeout_secs),
+        interceptor.intercept_request(request_clone),
+      )
+      .await
+      {
+        // Interceptor completed within timeout
+        Ok(Ok(Some(modified))) => request = modified,
+        Ok(Ok(None)) => return Ok(None), // Request blocked by interceptor
+        Ok(Err(e)) => return Err(e),     // Interceptor returned an error
+        // Timeout -> skip this interceptor but continue processing
+        Err(_) => {
+          tracing::warn!("Interceptor timed out after {}s; skipping", self.timeout_secs);
+          continue;
+        }
       }
     }
     Ok(Some(request))
@@ -388,9 +413,21 @@ impl InterceptorHandler {
   pub async fn process_response(&self, mut response: MitmResponse) -> Result<Option<MitmResponse>> {
     // Process through unified interceptors first
     for interceptor in &self.interceptors {
-      match interceptor.intercept_response(response).await? {
-        Some(modified) => response = modified,
-        None => return Ok(None), // Response blocked
+      // Clone before invoking so timeouts don't consume the in-band response
+      let response_clone = response.clone();
+      match timeout(
+        std::time::Duration::from_secs(self.timeout_secs),
+        interceptor.intercept_response(response_clone),
+      )
+      .await
+      {
+        Ok(Ok(Some(modified))) => response = modified,
+        Ok(Ok(None)) => return Ok(None), // Response blocked
+        Ok(Err(e)) => return Err(e),     // Interceptor error
+        Err(_) => {
+          tracing::warn!("Interceptor timed out after {}s; skipping", self.timeout_secs);
+          continue;
+        }
       }
     }
     Ok(Some(response))
@@ -475,3 +512,4 @@ impl Interceptor for LoggingInterceptor {
     Ok(Some(response))
   }
 }
+

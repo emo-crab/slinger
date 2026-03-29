@@ -17,7 +17,7 @@ async fn test_ca_generation() {
   let manager = manager.unwrap();
 
   // Verify CA cert PEM can be retrieved
-  let ca_pem = manager.ca_cert_pem();
+  let ca_pem = manager.ca_cert_pem().await;
   assert!(ca_pem.is_ok(), "Failed to get CA certificate PEM");
 
   let pem_content = ca_pem.unwrap();
@@ -155,6 +155,7 @@ async fn test_mitm_proxy_creation() {
     enable_tcp_interception: false,
     max_connections: 100,
     connection_timeout: 10,
+    interceptor_timeout_secs: 60,
     upstream_proxy: None,
   };
 
@@ -169,7 +170,7 @@ async fn test_mitm_proxy_creation() {
   let proxy = proxy.unwrap();
 
   // Verify CA certificate is accessible
-  let ca_pem = proxy.ca_cert_pem();
+  let ca_pem = proxy.ca_cert_pem().await;
   assert!(ca_pem.is_ok(), "Failed to get CA certificate from proxy");
 
   // Verify CA path
@@ -224,6 +225,7 @@ async fn test_mitm_proxy_with_upstream_proxy() {
     enable_tcp_interception: false,
     max_connections: 100,
     connection_timeout: 10,
+    interceptor_timeout_secs: 60,
     upstream_proxy: Some(proxy_result.unwrap()),
   };
 

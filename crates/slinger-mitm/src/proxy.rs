@@ -23,6 +23,10 @@ pub struct MitmConfig {
   pub max_connections: usize,
   /// Connection timeout in seconds
   pub connection_timeout: u64,
+  /// Interceptor timeout in seconds. Each interceptor is given this duration
+  /// to process a request/response; if it exceeds the timeout it will be
+  /// skipped to avoid blocking the proxy.
+  pub interceptor_timeout_secs: u64,
   /// Optional upstream proxy (supports HTTP, HTTPS, SOCKS5, SOCKS5h)
   /// Example: "<socks5h://127.0.0.1:1080>" or "<http://proxy.example.com:8080>"
   pub upstream_proxy: Option<Proxy>,
@@ -36,6 +40,8 @@ impl Default for MitmConfig {
       enable_tcp_interception: false,
       max_connections: 1000,
       connection_timeout: 30,
+      // Default interceptor timeout: 60 seconds
+      interceptor_timeout_secs: 60,
       upstream_proxy: None,
     }
   }
@@ -52,7 +58,9 @@ impl MitmProxy {
   /// Create a new MITM proxy with the given configuration
   pub async fn new(config: MitmConfig) -> Result<Self> {
     let cert_manager = Arc::new(CertificateManager::new(&config.ca_storage_path).await?);
-    let interceptor_handler = Arc::new(RwLock::new(InterceptorHandler::new()));
+    let interceptor_handler = Arc::new(RwLock::new(
+      InterceptorHandler::new().with_timeout(config.interceptor_timeout_secs),
+    ));
 
     Ok(Self {
       config,
@@ -66,11 +74,10 @@ impl MitmProxy {
     Self::new(MitmConfig::default()).await
   }
 
-  /// Get the CA certificate in PEM format
-  ///
-  /// This certificate should be installed in the client's trust store
-  pub fn ca_cert_pem(&self) -> Result<String> {
-    self.cert_manager.ca_cert_pem()
+  /// Get the CA certificate in PEM format (async). This crate no longer
+  /// exposes a synchronous API for reading the CA PEM.
+  pub async fn ca_cert_pem(&self) -> Result<String> {
+    self.cert_manager.ca_cert_pem().await
   }
 
   /// Get the CA certificate path
@@ -109,7 +116,7 @@ mod tests {
     assert!(proxy.is_ok());
 
     if let Ok(p) = proxy {
-      let ca_pem = p.ca_cert_pem();
+      let ca_pem = p.ca_cert_pem().await;
       assert!(ca_pem.is_ok());
     }
   }

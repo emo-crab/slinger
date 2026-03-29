@@ -93,6 +93,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     enable_tcp_interception: true,    // Enable TCP interception
     max_connections: 1000,
     connection_timeout: 30,
+    interceptor_timeout_secs: 60,
     upstream_proxy: None,
   };
 

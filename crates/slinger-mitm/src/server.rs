@@ -109,7 +109,7 @@ impl ProxyServerBuilder {
     // Resolve interceptor handler
     let interceptor_handler = self
       .interceptor_handler
-      .unwrap_or_else(|| Arc::new(RwLock::new(InterceptorHandler::new())));
+      .unwrap_or_else(|| Arc::new(RwLock::new(InterceptorHandler::new().with_timeout(config.interceptor_timeout_secs))));
 
     // Resolve client
     let client = if let Some(client) = self.client {
