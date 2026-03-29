@@ -6,7 +6,7 @@ use crate::interceptor::{InterceptorHandler, MitmRequest, MitmResponse};
 use crate::proxy::MitmConfig;
 use bytes::Bytes;
 use http::Version;
-use slinger::{Client, ClientBuilder, Request, Response};
+use slinger::{Body, Client, ClientBuilder, Request, Response};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -625,22 +625,18 @@ impl ProxyServer {
   where
     S: AsyncReadExt + AsyncWriteExt + Unpin,
   {
-    // Read HTTP request from TLS stream with size limit
-    const MAX_REQUEST_SIZE: usize = 1024 * 1024; // 1MB limit
+    // Read HTTP request headers until we see the blank line (\r\n\r\n).
     let mut buffer = Vec::new();
     let mut temp_buf = [0u8; 8192];
+    let mut header_end_pos: Option<usize> = None;
 
     loop {
       match tls_stream.read(&mut temp_buf).await {
         Ok(0) => break,
         Ok(n) => {
           buffer.extend_from_slice(&temp_buf[..n]);
-          if buffer.len() > MAX_REQUEST_SIZE {
-            return Err(Error::invalid_request(
-              "Request size exceeds maximum allowed".to_string(),
-            ));
-          }
-          if buffer.windows(4).any(|w| w == b"\r\n\r\n") {
+          if let Some(pos) = buffer.windows(4).position(|w| w == b"\r\n\r\n") {
+            header_end_pos = Some(pos + 4);
             break;
           }
         }
@@ -648,8 +644,39 @@ impl ProxyServer {
       }
     }
 
-    // Parse request
-    if let Ok(request) = Self::parse_http_request(&buffer, &domain) {
+    // Determine where headers end and body begins
+    let header_end = header_end_pos.unwrap_or(buffer.len());
+
+    // Parse request from headers portion
+    if let Ok(mut request) = Self::parse_http_request(&buffer[..header_end], &domain) {
+      // Extract Content-Length to read the request body
+      let content_length: usize = request
+        .headers
+        .get(http::header::CONTENT_LENGTH)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+
+      if content_length > 0 {
+        // Some body bytes may already be buffered after the header separator
+        let already_read = &buffer[header_end..];
+        let already_len = already_read.len().min(content_length);
+        let remaining_len = content_length - already_len;
+
+        let body_bytes = if remaining_len > 0 {
+          let mut full_body = already_read[..already_len].to_vec();
+          full_body.resize(content_length, 0);
+          tls_stream
+            .read_exact(&mut full_body[already_len..])
+            .await?;
+          Bytes::from(full_body)
+        } else {
+          Bytes::copy_from_slice(&already_read[..content_length])
+        };
+
+        request.body = Some(Body::from(body_bytes));
+      }
+
       if let Some(response_bytes) =
         Self::forward_request_via_client(interceptor, &client, request, &domain).await?
       {
@@ -671,8 +698,7 @@ impl ProxyServer {
   where
     R: AsyncReadExt + AsyncWriteExt + Unpin,
   {
-    // Read headers with size limit
-    const MAX_HEADERS_SIZE: usize = 64 * 1024; // 64KB limit for headers
+    // Read headers line by line until the blank line that ends them.
     let mut headers_buf = Vec::new();
     loop {
       let mut line = String::new();
@@ -681,13 +707,6 @@ impl ProxyServer {
         break;
       }
       headers_buf.extend_from_slice(line.as_bytes());
-
-      // Check headers size limit
-      if headers_buf.len() > MAX_HEADERS_SIZE {
-        return Err(Error::invalid_request(
-          "Headers size exceeds maximum allowed".to_string(),
-        ));
-      }
     }
 
     // Build request using http::Request::builder, then convert to slinger::Request
@@ -696,16 +715,29 @@ impl ProxyServer {
       .uri(uri)
       .version(Version::HTTP_11);
 
-    // Parse headers
+    // Parse headers and extract Content-Length
+    let mut content_length: usize = 0;
     for line in String::from_utf8_lossy(&headers_buf).lines() {
       if let Some(idx) = line.find(':') {
         let (name, value) = line.split_at(idx);
         let value = value[1..].trim();
         request_builder = request_builder.header(name.trim(), value);
+        if name.trim().eq_ignore_ascii_case("content-length") {
+          content_length = value.parse().unwrap_or(0);
+        }
       }
     }
 
-    let http_request = request_builder.body(Bytes::new())?;
+    // Read the request body based on Content-Length
+    let body = if content_length > 0 {
+      let mut body_buf = vec![0u8; content_length];
+      reader.read_exact(&mut body_buf).await?;
+      Bytes::from(body_buf)
+    } else {
+      Bytes::new()
+    };
+
+    let http_request = request_builder.body(body)?;
     let request: Request = http_request.into();
 
     // Process through interceptors and forward
@@ -801,13 +833,48 @@ impl ProxyServer {
     );
     buf.extend_from_slice(status_line.as_bytes());
 
+    // Determine whether the origin used chunked transfer encoding.
+    // If so, the body has already been decoded by the slinger client, so we
+    // must strip the Transfer-Encoding header and emit a correct Content-Length
+    // instead; otherwise downstream clients would try to parse raw bytes as
+    // chunked data and fail with "early eof" / truncated responses.
+    let had_chunked_te = response
+      .headers()
+      .get(http::header::TRANSFER_ENCODING)
+      .map(|v| v.as_bytes().eq_ignore_ascii_case(b"chunked"))
+      .unwrap_or(false);
+
+    let body_len = response.body().as_ref().map(|b| b.len()).unwrap_or(0);
+
+    let mut wrote_content_length = false;
+
     // Headers
     for (name, value) in response.headers() {
+      if name == http::header::TRANSFER_ENCODING && had_chunked_te {
+        // The body has been decoded; drop this header entirely.
+        continue;
+      }
+      if name == http::header::CONTENT_LENGTH {
+        // Rewrite Content-Length with the actual (decoded) body length so
+        // that it is always accurate, regardless of what the server sent.
+        let line = format!("{}: {}\r\n", name.as_str(), body_len);
+        buf.extend_from_slice(line.as_bytes());
+        wrote_content_length = true;
+        continue;
+      }
       buf.extend_from_slice(name.as_str().as_bytes());
       buf.extend_from_slice(b": ");
       buf.extend_from_slice(value.as_bytes());
       buf.extend_from_slice(b"\r\n");
     }
+
+    // If chunked TE was removed and no Content-Length was present, add one so
+    // the client knows exactly how many bytes to read.
+    if had_chunked_te && !wrote_content_length {
+      let line = format!("{}: {}\r\n", http::header::CONTENT_LENGTH.as_str(), body_len);
+      buf.extend_from_slice(line.as_bytes());
+    }
+
     // Empty line before body
     buf.extend_from_slice(b"\r\n");
     // Body
