@@ -89,8 +89,6 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
   // Create proxy with TCP interception enabled
   let config = MitmConfig {
     ca_storage_path: std::path::PathBuf::from(".slinger-mitm"),
-    enable_https_interception: false, // Disable HTTPS interception for raw TCP mode
-    enable_tcp_interception: true,    // Enable TCP interception
     max_connections: 1000,
     connection_timeout: 30,
     interceptor_timeout_secs: 60,

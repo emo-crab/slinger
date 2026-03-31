@@ -151,8 +151,6 @@ async fn test_server_cert_caching_and_tls_config() {
 async fn test_mitm_proxy_creation() {
   let config = MitmConfig {
     ca_storage_path: std::env::temp_dir().join("slinger-mitm-test-proxy"),
-    enable_https_interception: true,
-    enable_tcp_interception: false,
     max_connections: 100,
     connection_timeout: 10,
     interceptor_timeout_secs: 60,
@@ -221,8 +219,6 @@ async fn test_mitm_proxy_with_upstream_proxy() {
 
   let config = MitmConfig {
     ca_storage_path: std::env::temp_dir().join("slinger-mitm-test-with-proxy"),
-    enable_https_interception: true,
-    enable_tcp_interception: false,
     max_connections: 100,
     connection_timeout: 10,
     interceptor_timeout_secs: 60,

@@ -14,11 +14,6 @@ use tokio::sync::RwLock;
 pub struct MitmConfig {
   /// Path to store CA certificates
   pub ca_storage_path: PathBuf,
-  /// Enable HTTPS interception
-  pub enable_https_interception: bool,
-  /// Enable TCP traffic interception (non-HTTP traffic)
-  /// When enabled, raw TCP traffic can be intercepted and modified
-  pub enable_tcp_interception: bool,
   /// Maximum concurrent connections
   pub max_connections: usize,
   /// Connection timeout in seconds
@@ -36,8 +31,6 @@ impl Default for MitmConfig {
   fn default() -> Self {
     Self {
       ca_storage_path: PathBuf::from(".slinger-mitm"),
-      enable_https_interception: true,
-      enable_tcp_interception: false,
       max_connections: 1000,
       connection_timeout: 30,
       // Default interceptor timeout: 60 seconds

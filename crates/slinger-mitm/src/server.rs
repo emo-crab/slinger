@@ -5,12 +5,12 @@ use crate::error::{Error, Result};
 use crate::interceptor::{InterceptorHandler, MitmRequest, MitmResponse};
 use crate::proxy::MitmConfig;
 use bytes::Bytes;
-use http::Version;
-use slinger::{Body, Client, ClientBuilder, Request, Response};
+use http::Method;
+use slinger::{Client, ClientBuilder, Request};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::RwLock;
 use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer};
@@ -23,6 +23,36 @@ pub struct ProxyServer {
   cert_manager: Arc<CertificateManager>,
   interceptor_handler: Arc<RwLock<InterceptorHandler>>,
   client: Client,
+}
+
+struct TunnelRouteContext {
+  peer_addr: SocketAddr,
+  cert_manager: Arc<CertificateManager>,
+  interceptor: Arc<RwLock<InterceptorHandler>>,
+  client: Client,
+  upstream_proxy: Option<slinger::Proxy>,
+  protocol_tag: &'static str,
+}
+
+struct ConnectionContext {
+  peer_addr: SocketAddr,
+  cert_manager: Arc<CertificateManager>,
+  interceptor: Arc<RwLock<InterceptorHandler>>,
+  client: Client,
+  upstream_proxy: Option<slinger::Proxy>,
+}
+
+impl ConnectionContext {
+  fn into_tunnel(self, protocol_tag: &'static str) -> TunnelRouteContext {
+    TunnelRouteContext {
+      peer_addr: self.peer_addr,
+      cert_manager: self.cert_manager,
+      interceptor: self.interceptor,
+      client: self.client,
+      upstream_proxy: self.upstream_proxy,
+      protocol_tag,
+    }
+  }
 }
 
 /// Builder for `ProxyServer`.
@@ -107,9 +137,11 @@ impl ProxyServerBuilder {
     };
 
     // Resolve interceptor handler
-    let interceptor_handler = self
-      .interceptor_handler
-      .unwrap_or_else(|| Arc::new(RwLock::new(InterceptorHandler::new().with_timeout(config.interceptor_timeout_secs))));
+    let interceptor_handler = self.interceptor_handler.unwrap_or_else(|| {
+      Arc::new(RwLock::new(
+        InterceptorHandler::new().with_timeout(config.interceptor_timeout_secs),
+      ))
+    });
 
     // Resolve client
     let client = if let Some(client) = self.client {
@@ -196,15 +228,21 @@ impl ProxyServer {
     loop {
       match listener.accept().await {
         Ok((stream, peer_addr)) => {
-          let config = self.config.clone();
           let cert_manager = self.cert_manager.clone();
           let interceptor = self.interceptor_handler.clone();
           let client = self.client.clone();
+          let upstream_proxy = self.config.upstream_proxy.clone();
 
           tokio::spawn(async move {
-            if let Err(e) =
-              Self::handle_connection(stream, peer_addr, config, cert_manager, interceptor, client)
-                .await
+            if let Err(e) = Self::handle_connection(
+              stream,
+              peer_addr,
+              cert_manager,
+              interceptor,
+              client,
+              upstream_proxy,
+            )
+            .await
             {
               tracing::error!("[MITM] Error handling connection: {}", e);
             }
@@ -221,167 +259,140 @@ impl ProxyServer {
   async fn handle_connection(
     mut stream: TcpStream,
     peer_addr: SocketAddr,
-    config: MitmConfig,
     cert_manager: Arc<CertificateManager>,
     interceptor: Arc<RwLock<InterceptorHandler>>,
     client: Client,
+    upstream_proxy: Option<slinger::Proxy>,
   ) -> Result<()> {
-    use crate::socks5::Socks5Server;
-
     // Read the first byte to determine protocol
     let mut first_byte = [0u8; 1];
-    stream.read_exact(&mut first_byte).await?;
+    stream.peek(&mut first_byte).await?;
+
+    let ctx = ConnectionContext {
+      peer_addr,
+      cert_manager,
+      interceptor,
+      client,
+      upstream_proxy,
+    };
 
     // SOCKS5 version is 0x05, HTTP methods start with ASCII letters
     if first_byte[0] == 0x05 {
-      // Handle as SOCKS5 - we already consumed the version byte
-      // Put it back by handling the rest of the handshake
-      match Socks5Server::handle_handshake_with_version(&mut stream).await {
-        Ok(target_addr) => {
-          let target_host_port = target_addr.to_host_port();
+      // SOCKS5 handshake helper expects version byte to be consumed already.
+      stream.read_exact(&mut first_byte).await?;
+      return Self::handle_socks5_connection(stream, ctx).await;
+    }
 
-          // Check if TCP interception is enabled and if there are interceptors
-          let has_interceptors = interceptor.read().await.has_interceptors();
+    Self::handle_http_connection(stream, ctx).await
+  }
 
-          if config.enable_tcp_interception && has_interceptors {
-            // Use TCP interception for raw TCP traffic
-            Self::handle_tcp_tunnel_with_interception(
-              stream,
-              &target_host_port,
-              peer_addr,
-              interceptor,
-            )
-            .await
-          } else if config.enable_https_interception {
-            Self::handle_https_connect_socks5(
-              stream,
-              &target_host_port,
-              cert_manager,
-              interceptor,
-              client,
-            )
-            .await
-          } else {
-            Self::handle_tcp_tunnel(stream, &target_host_port).await
-          }
-        }
-        Err(e) => Err(e),
-      }
+  async fn handle_socks5_connection(
+    mut stream: TcpStream,
+    ctx: ConnectionContext,
+  ) -> Result<()> {
+    use crate::socks5::Socks5Server;
+
+    // Handle as SOCKS5 - we already consumed the version byte.
+    let target_addr = Socks5Server::handle_handshake_with_version(&mut stream).await?;
+    let target_host_port = target_addr.to_host_port();
+    Self::handle_tunnel_route(stream, &target_host_port, ctx.into_tunnel("SOCKS5")).await
+  }
+
+  async fn handle_http_connection(stream: TcpStream, ctx: ConnectionContext) -> Result<()> {
+    let mut reader = BufReader::new(stream);
+    let request = Request::from_http_reader(&mut reader).await?;
+    if request.method() == Method::CONNECT {
+      let uri = request.uri().to_string();
+      let mut stream = reader.into_inner();
+
+      // Send HTTP/1.1 200 Connection Established first, then auto-detect
+      // the underlying protocol to decide how to handle the tunnel.
+      stream
+        .write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n")
+        .await?;
+      stream.flush().await.map_err(Error::Io)?;
+
+      return Self::handle_tunnel_route(stream, &uri, ctx.into_tunnel("CONNECT")).await;
+    }
+
+    Self::handle_http_request(request, reader, ctx.interceptor, ctx.client).await
+  }
+
+  /// Shared tunnel routing for SOCKS5 and HTTP CONNECT.
+  async fn handle_tunnel_route(
+    stream: TcpStream,
+    target_addr: &str,
+    ctx: TunnelRouteContext,
+  ) -> Result<()> {
+    if Self::peek_tls_client_hello(&stream, ctx.protocol_tag).await {
+      let (domain, port) = Self::parse_host_port(target_addr)?;
+      return Self::accept_tls_and_handle(
+        stream,
+        &domain,
+        port,
+        false,
+        ctx.cert_manager,
+        ctx.interceptor,
+        ctx.client,
+      )
+      .await;
+    }
+
+    let has_interceptors = ctx.interceptor.read().await.has_interceptors();
+    let socket = slinger::Socket::new(slinger::StreamWrapper::Tcp(stream), None, None);
+
+    if has_interceptors {
+      Self::handle_tcp_tunnel_with_interception(
+        socket,
+        target_addr,
+        ctx.peer_addr,
+        ctx.interceptor,
+        ctx.upstream_proxy,
+      )
+      .await
     } else {
-      let mut request_line = vec![first_byte[0]];
-      let mut buffer = [0u8; 1];
-      loop {
-        stream.read_exact(&mut buffer).await?;
-        request_line.push(buffer[0]);
-        if buffer[0] == b'\n' {
-          break;
-        }
-        if request_line.len() > 8192 {
-          return Err(Error::invalid_request("Request line too long".to_string()));
-        }
-      }
-
-      let request_line_str = String::from_utf8_lossy(&request_line);
-      let parts: Vec<&str> = request_line_str.split_whitespace().collect();
-      if parts.len() < 3 {
-        return Err(Error::invalid_request("Invalid request line".to_string()));
-      }
-
-      let method = parts[0].to_string();
-      let uri = parts[1].to_string();
-      if method == "CONNECT" {
-        let mut reader = BufReader::new(stream);
-        const MAX_CONNECT_HEADERS: usize = 16 * 1024; // 16KB max for proxy headers
-        let mut headers_acc = 0usize;
-        loop {
-          let mut line = String::new();
-          let n = reader.read_line(&mut line).await?;
-          // n==0 indicates EOF; bail out
-          if n == 0 {
-            break;
-          }
-          headers_acc += n;
-          if headers_acc > MAX_CONNECT_HEADERS {
-            return Err(Error::invalid_request(
-              "CONNECT headers size exceeds maximum allowed".to_string(),
-            ));
-          }
-          // End of headers is an empty line (CRLF)
-          if line == "\r\n" || line == "\n" || line.is_empty() {
-            break;
-          }
-        }
-        let stream = reader.into_inner();
-        if config.enable_https_interception {
-          Self::handle_https_connect(stream, &uri, cert_manager, interceptor, client).await
-        } else {
-          Self::handle_https_tunnel(stream, &uri).await
-        }
-      } else {
-        let buf_reader = BufReader::new(stream);
-        Self::handle_http_request(&method, &uri, buf_reader, interceptor, client).await
-      }
+      Self::tcp_tunnel(socket, target_addr, false, ctx.upstream_proxy).await
     }
   }
 
-  /// Handle HTTPS CONNECT with MITM interception
-  async fn handle_https_connect(
-    client_stream: TcpStream,
-    uri: &str,
-    cert_manager: Arc<CertificateManager>,
-    interceptor: Arc<RwLock<InterceptorHandler>>,
-    slinger_client: Client,
-  ) -> Result<()> {
-    // Parse domain and port
-    let (domain, port) = Self::parse_host_port(uri)?;
-    // Perform TLS accept + MITM handling, send HTTP 200 before TLS handshake
-    Self::accept_tls_and_handle(
-      client_stream,
-      &domain,
-      port,
-      true,
-      cert_manager,
-      interceptor,
-      slinger_client,
-    )
-    .await
+  async fn peek_tls_client_hello(stream: &TcpStream, protocol_tag: &str) -> bool {
+    // A TLS ClientHello is client-first and starts with TLS record prefix 0x16 0x03.
+    let mut peek_buf = [0u8; 5];
+    let peeked = match tokio::time::timeout(Duration::from_millis(100), stream.peek(&mut peek_buf)).await {
+      Ok(Ok(n)) => n,
+      Ok(Err(e)) => {
+        tracing::debug!(
+          "[MITM {}] Peek failed, defaulting to TCP tunnel: {}",
+          protocol_tag,
+          e
+        );
+        0
+      }
+      Err(_) => {
+        tracing::debug!(
+          "[MITM {}] Peek timed out, defaulting to TCP tunnel",
+          protocol_tag
+        );
+        0
+      }
+    };
+
+    Self::is_tls_client_hello(&peek_buf[..peeked])
   }
 
-  /// Handle HTTPS tunnel without interception (transparent proxy)
-  async fn handle_https_tunnel(client_stream: TcpStream, uri: &str) -> Result<()> {
-    Self::tcp_tunnel(client_stream, uri, true).await
+  /// Returns `true` when `bytes` begins with a TLS handshake record header.
+  ///
+  /// A TLS record starts with:
+  ///   byte 0  – content type 0x16 (Handshake)
+  ///   byte 1  – major version 0x03 (TLS 1.0 / 1.1 / 1.2 / 1.3)
+  ///
+  /// This two-byte signature is sufficient to distinguish any TLS handshake
+  /// (including ClientHello) from plaintext HTTP, SSH banners, raw TCP data,
+  /// and virtually every other protocol.
+  fn is_tls_client_hello(bytes: &[u8]) -> bool {
+    bytes.len() >= 2 && bytes[0] == 0x16 && bytes[1] == 0x03
   }
 
-  /// Handle TCP tunnel without interception (for SOCKS5)
-  /// This function doesn't send any response - the SOCKS5 handshake already sent the reply
-  async fn handle_tcp_tunnel(client_stream: TcpStream, target_addr: &str) -> Result<()> {
-    Self::tcp_tunnel(client_stream, target_addr, false).await
-  }
-
-  /// Handle HTTPS CONNECT with MITM interception for SOCKS5
-  /// This function doesn't send HTTP response - the SOCKS5 handshake already sent the reply
-  async fn handle_https_connect_socks5(
-    client_stream: TcpStream,
-    uri: &str,
-    cert_manager: Arc<CertificateManager>,
-    interceptor: Arc<RwLock<InterceptorHandler>>,
-    slinger_client: Client,
-  ) -> Result<()> {
-    // Parse domain and port
-    let (domain, port) = Self::parse_host_port(uri)?;
-
-    // Perform TLS accept + MITM handling, do NOT send HTTP 200 (SOCKS5 already responded)
-    Self::accept_tls_and_handle(
-      client_stream,
-      &domain,
-      port,
-      false,
-      cert_manager,
-      interceptor,
-      slinger_client,
-    )
-    .await
-  }
 
   /// Accept TLS on an incoming stream (using certs from CertificateManager) and handle HTTPS requests over it.
   /// If `send_response` is true, send an HTTP/1.1 200 Connection Established before performing the TLS handshake
@@ -419,14 +430,14 @@ impl ProxyServer {
   }
 
   /// Generic TCP tunnel helper. If `send_response` is true, sends HTTP/1.1 200 before tunneling.
-  async fn tcp_tunnel(mut client_stream: TcpStream, uri: &str, send_response: bool) -> Result<()> {
-    let (host, port) = Self::parse_host_port(uri)?;
-    let addr = format!("{}:{}", host, port);
-
-    // Connect to target server
-    let mut target_stream = TcpStream::connect(&addr)
-      .await
-      .map_err(|e| Error::connection_error(format!("Failed to connect to {}: {}", addr, e)))?;
+  async fn tcp_tunnel(
+    mut client_stream: slinger::Socket,
+    uri: &str,
+    send_response: bool,
+    upstream_proxy: Option<slinger::Proxy>,
+  ) -> Result<()> {
+    // Connect to target server (through upstream proxy if configured)
+    let target_socket = Self::connect_to_target(uri, upstream_proxy.as_ref()).await?;
 
     if send_response {
       client_stream
@@ -434,8 +445,8 @@ impl ProxyServer {
         .await?;
     }
 
-    let (mut client_read, mut client_write) = client_stream.split();
-    let (mut target_read, mut target_write) = target_stream.split();
+    let (mut client_read, mut client_write) = tokio::io::split(client_stream);
+    let (mut target_read, mut target_write) = tokio::io::split(target_socket);
 
     let client_to_target = tokio::io::copy(&mut client_read, &mut target_write);
     let target_to_client = tokio::io::copy(&mut target_read, &mut client_write);
@@ -452,29 +463,26 @@ impl ProxyServer {
   /// This method intercepts both request and response data, passes them through
   /// the interceptors, and forwards the (potentially modified) data.
   async fn handle_tcp_tunnel_with_interception(
-    client_stream: TcpStream,
+    client_stream: slinger::Socket,
     target_addr: &str,
     peer_addr: SocketAddr,
     interceptor: Arc<RwLock<InterceptorHandler>>,
+    upstream_proxy: Option<slinger::Proxy>,
   ) -> Result<()> {
     use uuid::Uuid;
-
-    let (host, port) = Self::parse_host_port(target_addr)?;
-    let addr = format!("{}:{}", host, port);
 
     // Generate a session ID for this TCP connection using UUID
     // All requests and responses for this connection will share this session_id
     let connection_session_id = Uuid::new_v4().as_u128();
 
-    // Connect to target server
-    let target_stream = TcpStream::connect(&addr)
-      .await
-      .map_err(|e| Error::connection_error(format!("Failed to connect to {}: {}", addr, e)))?;
+    // Connect to target server (through upstream proxy if configured)
+    let target_socket = Self::connect_to_target(target_addr, upstream_proxy.as_ref()).await?;
 
-    let (mut client_read, mut client_write) = client_stream.into_split();
-    let (mut target_read, mut target_write) = target_stream.into_split();
+    let (mut client_read, mut client_write) = tokio::io::split(client_stream);
+    let (mut target_read, mut target_write) = tokio::io::split(target_socket);
 
-    let target_addr_clone = addr.clone();
+    let target_addr_clone = target_addr.to_string();
+    let target_addr_clone2 = target_addr.to_string();
     let interceptor_clone = interceptor.clone();
 
     // Client to target with interception
@@ -485,8 +493,7 @@ impl ProxyServer {
           Ok(0) => break, // Connection closed
           Ok(n) => {
             let data = Bytes::copy_from_slice(&buffer[..n]);
-            let mut request =
-              MitmRequest::raw_tcp_with_source(peer_addr, &target_addr_clone, data);
+            let mut request = MitmRequest::raw_tcp_with_source(peer_addr, &target_addr_clone, data);
             // Override the auto-generated session_id with the connection's session_id
             request.set_session_id(connection_session_id);
 
@@ -529,8 +536,12 @@ impl ProxyServer {
           Ok(n) => {
             let data = Bytes::copy_from_slice(&buffer[..n]);
             // Use the same connection_session_id to correlate with requests
-            let response =
-              MitmResponse::raw_tcp_with_destination(connection_session_id, &addr, peer_addr, data);
+            let response = MitmResponse::raw_tcp_with_destination(
+              connection_session_id,
+              &target_addr_clone2,
+              peer_addr,
+              data,
+            );
 
             // Process through interceptors
             let handler = interceptor.read().await;
@@ -570,7 +581,31 @@ impl ProxyServer {
     Ok(())
   }
 
-  /// Forward a prepared `Request` through the inner `slinger::Client` and run interceptors.
+  /// Connect to `target_addr` (in `"host:port"` format) routing through the
+  /// upstream proxy when configured.  Delegates to slinger's own
+  /// [`ConnectorBuilder`] and [`Connector::connect_with_uri`] so that HTTP
+  /// CONNECT and SOCKS5/SOCKS5h proxy logic is not duplicated here.
+  async fn connect_to_target(
+    target_addr: &str,
+    upstream_proxy: Option<&slinger::Proxy>,
+  ) -> Result<slinger::Socket> {
+    // Build a plain-text URI from the host:port string. Using the `http`
+    // scheme ensures slinger treats this as a raw TCP target and does **not**
+    // initiate a TLS upgrade after the proxy tunnel is established.
+    let uri = format!("http://{}", target_addr)
+      .parse::<http::Uri>()
+      .map_err(|e| {
+        Error::connection_error(format!("Invalid target address '{}': {}", target_addr, e))
+      })?;
+
+    let connector = slinger::ConnectorBuilder::default()
+      .proxy(upstream_proxy.cloned())
+      .build()
+      .map_err(|e| Error::connection_error(format!("Failed to build connector: {}", e)))?;
+
+    connector.connect_with_uri(&uri).await.map_err(Into::into)
+  }
+
   /// Returns Some(response_bytes) if there is a response to write back to the caller, or None if
   /// the interceptor chain dropped the request/response.
   async fn forward_request_via_client(
@@ -603,7 +638,7 @@ impl ProxyServer {
           // Pass the session_id from request to response for correlation
           let mitm_response = MitmResponse::new(session_id, destination, response);
           if let Some(final_response) = handler.process_response(mitm_response).await? {
-            let response_bytes = Self::serialize_http_response(final_response.response())?;
+            let response_bytes = Bytes::from(final_response.response()).to_vec();
             return Ok(Some(response_bytes));
           }
         }
@@ -617,7 +652,7 @@ impl ProxyServer {
 
   /// Handle HTTPS requests over TLS connection
   async fn handle_https_stream<S>(
-    mut tls_stream: S,
+    tls_stream: S,
     domain: String,
     interceptor: Arc<RwLock<InterceptorHandler>>,
     client: Client,
@@ -625,63 +660,32 @@ impl ProxyServer {
   where
     S: AsyncReadExt + AsyncWriteExt + Unpin,
   {
-    // Read HTTP request headers until we see the blank line (\r\n\r\n).
-    let mut buffer = Vec::new();
-    let mut temp_buf = [0u8; 8192];
-    let mut header_end_pos: Option<usize> = None;
+    // `from_http_reader` requires a BufReader; reclaim the inner stream afterwards for writing.
+    let mut reader = BufReader::new(tls_stream);
+    let request_result = Request::from_http_reader(&mut reader).await;
+    let mut tls_stream = reader.into_inner();
 
-    loop {
-      match tls_stream.read(&mut temp_buf).await {
-        Ok(0) => break,
-        Ok(n) => {
-          buffer.extend_from_slice(&temp_buf[..n]);
-          if let Some(pos) = buffer.windows(4).position(|w| w == b"\r\n\r\n") {
-            header_end_pos = Some(pos + 4);
-            break;
-          }
-        }
-        Err(e) => return Err(Error::Io(e)),
+    let mut request = match request_result {
+      Ok(req) => req,
+      Err(e) => {
+        tracing::debug!("[MITM HTTPS] Failed to parse request: {}", e);
+        return Ok(());
       }
+    };
+
+    // Fix relative URI to be absolute (e.g., /path -> https://domain/path)
+    if request.uri().host().is_none() {
+      let pq = request.uri().path_and_query().map(|pq| pq.as_str()).unwrap_or("/");
+      let absolute_uri = format!("https://{}{}", domain, pq)
+        .parse::<http::Uri>()
+        .map_err(|e| Error::invalid_request(format!("Invalid URI: {}", e)))?;
+      *request.uri_mut() = absolute_uri;
     }
 
-    // Determine where headers end and body begins
-    let header_end = header_end_pos.unwrap_or(buffer.len());
-
-    // Parse request from headers portion
-    if let Ok(mut request) = Self::parse_http_request(&buffer[..header_end], &domain) {
-      // Extract Content-Length to read the request body
-      let content_length: usize = request
-        .headers
-        .get(http::header::CONTENT_LENGTH)
-        .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(0);
-
-      if content_length > 0 {
-        // Some body bytes may already be buffered after the header separator
-        let already_read = &buffer[header_end..];
-        let already_len = already_read.len().min(content_length);
-        let remaining_len = content_length - already_len;
-
-        let body_bytes = if remaining_len > 0 {
-          let mut full_body = already_read[..already_len].to_vec();
-          full_body.resize(content_length, 0);
-          tls_stream
-            .read_exact(&mut full_body[already_len..])
-            .await?;
-          Bytes::from(full_body)
-        } else {
-          Bytes::copy_from_slice(&already_read[..content_length])
-        };
-
-        request.body = Some(Body::from(body_bytes));
-      }
-
-      if let Some(response_bytes) =
-        Self::forward_request_via_client(interceptor, &client, request, &domain).await?
-      {
-        tls_stream.write_all(&response_bytes).await?;
-      }
+    if let Some(response_bytes) =
+      Self::forward_request_via_client(interceptor, &client, request, &domain).await?
+    {
+      tls_stream.write_all(&response_bytes).await?;
     }
 
     Ok(())
@@ -689,60 +693,19 @@ impl ProxyServer {
 
   /// Handle HTTP request (non-HTTPS)
   async fn handle_http_request<R>(
-    method: &str,
-    uri: &str,
-    mut reader: BufReader<R>,
+    request: Request,
+    reader: BufReader<R>,
     interceptor: Arc<RwLock<InterceptorHandler>>,
     client: Client,
   ) -> Result<()>
   where
     R: AsyncReadExt + AsyncWriteExt + Unpin,
   {
-    // Read headers line by line until the blank line that ends them.
-    let mut headers_buf = Vec::new();
-    loop {
-      let mut line = String::new();
-      reader.read_line(&mut line).await?;
-      if line == "\r\n" || line == "\n" {
-        break;
-      }
-      headers_buf.extend_from_slice(line.as_bytes());
-    }
-
-    // Build request using http::Request::builder, then convert to slinger::Request
-    let mut request_builder = http::Request::builder()
-      .method(method)
-      .uri(uri)
-      .version(Version::HTTP_11);
-
-    // Parse headers and extract Content-Length
-    let mut content_length: usize = 0;
-    for line in String::from_utf8_lossy(&headers_buf).lines() {
-      if let Some(idx) = line.find(':') {
-        let (name, value) = line.split_at(idx);
-        let value = value[1..].trim();
-        request_builder = request_builder.header(name.trim(), value);
-        if name.trim().eq_ignore_ascii_case("content-length") {
-          content_length = value.parse().unwrap_or(0);
-        }
-      }
-    }
-
-    // Read the request body based on Content-Length
-    let body = if content_length > 0 {
-      let mut body_buf = vec![0u8; content_length];
-      reader.read_exact(&mut body_buf).await?;
-      Bytes::from(body_buf)
-    } else {
-      Bytes::new()
-    };
-
-    let http_request = request_builder.body(body)?;
-    let request: Request = http_request.into();
+    let uri = request.uri().to_string();
 
     // Process through interceptors and forward
     if let Some(response_bytes) =
-      Self::forward_request_via_client(interceptor, &client, request, uri).await?
+      Self::forward_request_via_client(interceptor, &client, request, &uri).await?
     {
       let mut stream = reader.into_inner();
       stream.write_all(&response_bytes).await?;
@@ -779,108 +742,4 @@ impl ProxyServer {
     Ok((host, port))
   }
 
-  /// Parse HTTP request from bytes
-  fn parse_http_request(buffer: &[u8], domain: &str) -> Result<Request> {
-    let request_str = String::from_utf8_lossy(buffer);
-    let mut lines = request_str.lines();
-
-    let request_line = lines
-      .next()
-      .ok_or_else(|| Error::invalid_request("Empty request".to_string()))?;
-    let parts: Vec<&str> = request_line.split_whitespace().collect();
-    if parts.len() < 3 {
-      return Err(Error::invalid_request("Invalid request line".to_string()));
-    }
-
-    let method = parts[0];
-    let path = parts[1];
-    let uri = if path.starts_with("http://") || path.starts_with("https://") {
-      path.to_string()
-    } else {
-      format!("https://{}{}", domain, path)
-    };
-
-    let mut request_builder = http::Request::builder()
-      .method(method)
-      .uri(uri)
-      .version(Version::HTTP_11);
-
-    for line in lines {
-      if line.is_empty() {
-        break;
-      }
-      if let Some(idx) = line.find(':') {
-        let (name, value) = line.split_at(idx);
-        let value = value[1..].trim();
-        request_builder = request_builder.header(name.trim(), value);
-      }
-    }
-
-    let http_request = request_builder.body(Bytes::new())?;
-    Ok(http_request.into())
-  }
-
-  /// Serialize HTTP response to bytes
-  fn serialize_http_response(response: &Response) -> Result<Vec<u8>> {
-    let mut buf = Vec::new();
-
-    // Status line
-    let status = response.status_code();
-    let status_line = format!(
-      "HTTP/1.1 {} {}\r\n",
-      status.as_u16(),
-      status.canonical_reason().unwrap_or("Unknown")
-    );
-    buf.extend_from_slice(status_line.as_bytes());
-
-    // Determine whether the origin used chunked transfer encoding.
-    // If so, the body has already been decoded by the slinger client, so we
-    // must strip the Transfer-Encoding header and emit a correct Content-Length
-    // instead; otherwise downstream clients would try to parse raw bytes as
-    // chunked data and fail with "early eof" / truncated responses.
-    let had_chunked_te = response
-      .headers()
-      .get(http::header::TRANSFER_ENCODING)
-      .map(|v| v.as_bytes().eq_ignore_ascii_case(b"chunked"))
-      .unwrap_or(false);
-
-    let body_len = response.body().as_ref().map(|b| b.len()).unwrap_or(0);
-
-    let mut wrote_content_length = false;
-
-    // Headers
-    for (name, value) in response.headers() {
-      if name == http::header::TRANSFER_ENCODING && had_chunked_te {
-        // The body has been decoded; drop this header entirely.
-        continue;
-      }
-      if name == http::header::CONTENT_LENGTH {
-        // Rewrite Content-Length with the actual (decoded) body length so
-        // that it is always accurate, regardless of what the server sent.
-        let line = format!("{}: {}\r\n", name.as_str(), body_len);
-        buf.extend_from_slice(line.as_bytes());
-        wrote_content_length = true;
-        continue;
-      }
-      buf.extend_from_slice(name.as_str().as_bytes());
-      buf.extend_from_slice(b": ");
-      buf.extend_from_slice(value.as_bytes());
-      buf.extend_from_slice(b"\r\n");
-    }
-
-    // If chunked TE was removed and no Content-Length was present, add one so
-    // the client knows exactly how many bytes to read.
-    if had_chunked_te && !wrote_content_length {
-      let line = format!("{}: {}\r\n", http::header::CONTENT_LENGTH.as_str(), body_len);
-      buf.extend_from_slice(line.as_bytes());
-    }
-
-    // Empty line before body
-    buf.extend_from_slice(b"\r\n");
-    // Body
-    if let Some(body) = response.body() {
-      buf.extend_from_slice(body.as_ref());
-    }
-    Ok(buf)
-  }
 }
