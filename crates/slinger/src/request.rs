@@ -1,11 +1,12 @@
 use crate::body::Body;
 use crate::record::CommandRecord;
 use crate::response::parser_headers;
-use crate::{Client, Response, COLON_SPACE, CR_LF, SPACE};
+use crate::{Client, Error, Response, COLON_SPACE, CR_LF, SPACE};
 use bytes::Bytes;
 use http::Request as HttpRequest;
 use http::{HeaderMap, HeaderName, HeaderValue, Method, Version};
 use std::fmt::{Debug, Formatter};
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, BufReader};
 
 /// Unsafe specifies whether to use raw engine for sending Non RFC-Compliant requests.
 #[derive(Debug, Default, Clone)]
@@ -129,30 +130,30 @@ where
   }
 }
 
-impl Request {
-  pub(crate) fn to_raw(&self) -> Bytes {
-    if let Some(raw) = &self.raw_request {
+impl From<&Request> for Bytes {
+  fn from(value: &Request) -> Self {
+    if let Some(raw) = &value.raw_request {
       return raw.raw.clone();
     }
     let mut http_requests = Vec::new();
     // 请求头
-    http_requests.extend(self.method.as_str().as_bytes());
+    http_requests.extend(value.method.as_str().as_bytes());
     http_requests.extend(SPACE);
     // 路径
-    http_requests.extend(self.uri.path().as_bytes());
-    if let Some(q) = self.uri.query() {
+    http_requests.extend(value.uri.path().as_bytes());
+    if let Some(q) = value.uri.query() {
       http_requests.extend([63]);
       http_requests.extend(q.as_bytes());
     }
     http_requests.extend(SPACE);
     // 版本
-    http_requests.extend(format!("{:?}", self.version).as_bytes());
+    http_requests.extend(format!("{:?}", value.version).as_bytes());
     http_requests.extend(CR_LF);
     // 如果请求头里面没有主机头就先加主机头
-    if self.headers.get(http::header::HOST).is_none() {
+    if value.headers.get(http::header::HOST).is_none() {
       http_requests.extend(http::header::HOST.as_str().as_bytes());
       http_requests.extend(COLON_SPACE);
-      http_requests.extend(if let Some(s) = self.uri.authority() {
+      http_requests.extend(if let Some(s) = value.uri.authority() {
         s.as_str().as_bytes()
       } else {
         &[]
@@ -160,9 +161,9 @@ impl Request {
       http_requests.extend(CR_LF);
     }
     // 添加请求头
-    let mut headers = self.headers.clone();
+    let mut headers = value.headers.clone();
     // 如果有body加入Content-Length请求头
-    if let Some(b) = self.body() {
+    if let Some(b) = value.body() {
       if !b.is_empty() {
         headers
           .entry(http::header::CONTENT_LENGTH)
@@ -177,13 +178,116 @@ impl Request {
     }
     http_requests.extend(CR_LF);
     // 添加body
-    if let Some(b) = self.body() {
+    if let Some(b) = value.body() {
       if !b.is_empty() {
         http_requests.extend(b.as_ref());
       }
     }
     Bytes::from(http_requests)
   }
+}
+
+impl From<Request> for Bytes {
+  fn from(value: Request) -> Self {
+    Bytes::from(&value)
+  }
+}
+
+impl Request {
+  /// Build a `Request` from an HTTP start-line and buffered stream body.
+  pub async fn from_http_reader<R>(reader: &mut BufReader<R>) -> crate::Result<Self>
+  where
+    R: AsyncRead + Unpin,
+  {
+    let mut request_line = String::new();
+    let n = reader.read_line(&mut request_line).await?;
+    if n == 0 {
+      return Err(Error::invalid_request("Empty request".to_string()));
+    }
+    let parts: Vec<&str> = request_line.split_whitespace().collect();
+    if parts.len() < 3 {
+      return Err(Error::invalid_request("Invalid request line".to_string()));
+    }
+    let method = parts[0];
+    let uri = parts[1];
+    let version = Self::parse_http_version(parts[2])?;
+
+    // Read headers line by line until the blank line that ends them.
+    let mut headers_buf = Vec::new();
+    loop {
+      let mut line = String::new();
+      reader.read_line(&mut line).await?;
+      if line == "\r\n" || line == "\n" {
+        break;
+      }
+      headers_buf.extend_from_slice(line.as_bytes());
+    }
+
+    let mut content_length: usize = 0;
+    let mut parsed_headers: Vec<(String, String)> = Vec::new();
+    for line in String::from_utf8_lossy(&headers_buf).lines() {
+      if let Some(idx) = line.find(':') {
+        let (name, value) = line.split_at(idx);
+        let value = value[1..].trim();
+        parsed_headers.push((name.trim().to_string(), value.to_string()));
+        if name.trim().eq_ignore_ascii_case("content-length") {
+          content_length = value.parse().unwrap_or(0);
+        }
+      }
+    }
+
+    let body = if content_length > 0 {
+      let mut body_buf = vec![0u8; content_length];
+      reader.read_exact(&mut body_buf).await?;
+      Bytes::from(body_buf)
+    } else {
+      Bytes::new()
+    };
+
+    Self::from_http_parts(method, uri, version, parsed_headers, body)
+  }
+
+  fn parse_http_version(version: &str) -> crate::Result<Version> {
+    match version {
+      "HTTP/0.9" => Ok(Version::HTTP_09),
+      "HTTP/1.0" => Ok(Version::HTTP_10),
+      "HTTP/1.1" => Ok(Version::HTTP_11),
+      "HTTP/2.0" | "HTTP/2" => Ok(Version::HTTP_2),
+      "HTTP/3.0" | "HTTP/3" => Ok(Version::HTTP_3),
+      _ => Err(Error::invalid_request(format!(
+        "Unsupported HTTP version: {}",
+        version
+      ))),
+    }
+  }
+
+  /// Build a `Request` from parsed HTTP components.
+  pub fn from_http_parts<I, K, V, B>(
+    method: &str,
+    uri: &str,
+    version: Version,
+    headers: I,
+    body: B,
+  ) -> crate::Result<Self>
+  where
+    I: IntoIterator<Item = (K, V)>,
+    K: AsRef<str>,
+    V: AsRef<str>,
+    B: Into<Body>,
+  {
+    let mut request_builder = http::Request::builder()
+      .method(method)
+      .uri(uri)
+      .version(version);
+
+    for (name, value) in headers {
+      request_builder = request_builder.header(name.as_ref(), value.as_ref());
+    }
+
+    let http_request = request_builder.body(body.into())?;
+    Ok(http_request.into())
+  }
+
   /// Creates a new builder-style object to manufacture a `Request`
   ///
   /// This method returns an instance of `Builder` which can be used to

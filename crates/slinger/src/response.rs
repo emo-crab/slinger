@@ -116,28 +116,70 @@ where
   }
 }
 
-impl Response {
-  pub(crate) fn to_raw(&self) -> Bytes {
-    let mut http_response = Vec::new();
-    http_response.extend(format!("{:?}", self.version).as_bytes());
-    http_response.extend(SPACE);
-    http_response.extend(format!("{}", self.status_code).as_bytes());
-    http_response.extend(CR_LF);
-    for (k, v) in self.headers.iter() {
-      http_response.extend(k.as_str().as_bytes());
-      http_response.extend(COLON_SPACE);
-      http_response.extend(v.as_bytes());
-      http_response.extend(CR_LF);
-    }
-    http_response.extend(CR_LF);
-    // 添加body
-    if let Some(b) = self.body() {
-      if !b.is_empty() {
-        http_response.extend(b.as_ref());
+impl From<&Response> for Bytes {
+  fn from(value: &Response) -> Self {
+    let mut buf = Vec::new();
+
+    // Status line
+    let status = value.status_code();
+    buf.extend_from_slice(format!("{:?}", value.version()).as_bytes());
+    buf.extend_from_slice(SPACE);
+    buf.extend_from_slice(status.as_u16().to_string().as_bytes());
+    buf.extend_from_slice(SPACE);
+    buf.extend_from_slice(status.canonical_reason().unwrap_or("Unknown").as_bytes());
+    buf.extend_from_slice(CR_LF);
+
+    // If body bytes are already decoded, chunked TE is invalid for the emitted raw bytes.
+    let had_chunked_te = value
+      .headers()
+      .get(http::header::TRANSFER_ENCODING)
+      .map(|v| v.as_bytes().eq_ignore_ascii_case(b"chunked"))
+      .unwrap_or(false);
+
+    let body_len = value.body().as_ref().map(|b| b.len()).unwrap_or(0);
+    let mut wrote_content_length = false;
+
+    for (name, header_value) in value.headers() {
+      if name == http::header::TRANSFER_ENCODING && had_chunked_te {
+        continue;
       }
+      if name == http::header::CONTENT_LENGTH {
+        buf.extend_from_slice(name.as_str().as_bytes());
+        buf.extend_from_slice(COLON_SPACE);
+        buf.extend_from_slice(body_len.to_string().as_bytes());
+        buf.extend_from_slice(CR_LF);
+        wrote_content_length = true;
+        continue;
+      }
+      buf.extend_from_slice(name.as_str().as_bytes());
+      buf.extend_from_slice(COLON_SPACE);
+      buf.extend_from_slice(header_value.as_bytes());
+      buf.extend_from_slice(CR_LF);
     }
-    Bytes::from(http_response)
+
+    if had_chunked_te && !wrote_content_length {
+      buf.extend_from_slice(http::header::CONTENT_LENGTH.as_str().as_bytes());
+      buf.extend_from_slice(COLON_SPACE);
+      buf.extend_from_slice(body_len.to_string().as_bytes());
+      buf.extend_from_slice(CR_LF);
+    }
+
+    buf.extend_from_slice(CR_LF);
+    if let Some(body) = value.body() {
+      buf.extend_from_slice(body.as_ref());
+    }
+
+    Bytes::from(buf)
   }
+}
+
+impl From<Response> for Bytes {
+  fn from(value: Response) -> Self {
+    Bytes::from(&value)
+  }
+}
+
+impl Response {
   /// An HTTP response builder
   ///
   /// This type can be used to construct an instance of `Response` through a
@@ -1042,3 +1084,41 @@ pub(crate) fn parser_headers(
   }
   Ok((k, v))
 }
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn to_raw_removes_chunked_and_adds_content_length() {
+    let response: Response = HttpResponse::builder()
+      .version(http::Version::HTTP_11)
+      .status(http::StatusCode::OK)
+      .header(http::header::TRANSFER_ENCODING, "chunked")
+      .body(Bytes::from_static(b"hello"))
+      .unwrap()
+      .into();
+
+    let raw = String::from_utf8(Bytes::from(&response).to_vec()).unwrap();
+    assert!(raw.starts_with("HTTP/1.1 200 OK\r\n"));
+    assert!(!raw.contains("transfer-encoding"));
+    assert!(raw.contains("content-length: 5\r\n"));
+    assert!(raw.ends_with("\r\n\r\nhello"));
+  }
+
+  #[test]
+  fn to_raw_rewrites_content_length_to_actual_body_size() {
+    let response: Response = HttpResponse::builder()
+      .version(http::Version::HTTP_11)
+      .status(http::StatusCode::OK)
+      .header(http::header::CONTENT_LENGTH, "999")
+      .body(Bytes::from_static(b"abc"))
+      .unwrap()
+      .into();
+
+    let raw = String::from_utf8(Bytes::from(&response).to_vec()).unwrap();
+    assert!(raw.contains("content-length: 3\r\n"));
+    assert!(!raw.contains("content-length: 999\r\n"));
+  }
+}
+

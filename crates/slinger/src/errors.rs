@@ -72,6 +72,14 @@ pub(crate) fn new_io_error(error_kind: ErrorKind, msg: &str) -> Error {
   tracing::error!("IO error: {}", error);
   error
 }
+
+impl Error {
+  pub(crate) fn invalid_request(msg: impl Into<String>) -> Error {
+    let error = Error::Other(msg.into());
+    tracing::error!("Invalid request: {}", error);
+    error
+  }
+}
 #[cfg(feature = "tls")]
 pub(crate) fn builder<E: Into<Box<dyn std::error::Error + Send + Sync>>>(e: E) -> Error {
   let error = Error::Other(e.into().to_string());

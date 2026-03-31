@@ -249,7 +249,7 @@ impl Client {
         }
       }
       // HTTP/1.1 path (existing code)
-      let raw: Bytes = request.to_raw();
+      let raw: Bytes = Bytes::from(request);
       #[cfg(feature = "tls")]
       let mut peer_certificate: Option<Vec<PeerCertificate>> = None;
       #[cfg(feature = "tls")]

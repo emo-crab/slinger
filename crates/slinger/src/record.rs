@@ -83,11 +83,11 @@ pub struct HTTPRecord {
 
 impl HTTPRecord {
   pub(crate) fn record_request(&mut self, irq: &Request) {
-    self.raw_request = irq.to_raw();
+    self.raw_request = Bytes::from(irq);
     self.request = irq.clone();
   }
   pub(crate) fn record_response(&mut self, irp: &Response) {
-    self.raw_response = irp.to_raw();
+    self.raw_response = Bytes::from(irp);
     self.response = irp.clone();
   }
 }
@@ -108,7 +108,7 @@ impl From<&Request> for CommandRecord {
       .port_u16()
       .unwrap_or(if https { 443 } else { 80 })
       .to_string();
-    let raw = value.to_raw();
+    let raw = Bytes::from(value);
     let command = if let Some(_raw) = value.raw_request() {
       let lines = raw
         .split(|b| b == &0xA)

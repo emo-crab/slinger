@@ -266,7 +266,7 @@ impl HttpProxy {
       br = br.header("Proxy-Authorization", auth);
     }
     let br: Request = br.body(None)?.into();
-    Ok(br.to_raw())
+    Ok(Bytes::from(br))
   }
   #[allow(clippy::unused_io_amount)]
   async fn read_resp(&self, proxy_socket: &mut Socket) -> Result<Response> {
