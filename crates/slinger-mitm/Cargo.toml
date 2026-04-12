@@ -1,6 +1,6 @@
 [package]
 name = "slinger-mitm"
-version = "0.0.4"
+version = "0.0.5"
 edition.workspace = true
 description = "MITM proxy with transparent traffic interception using rustls backend for slinger"
 homepage.workspace = true
@@ -18,7 +18,7 @@ bytes.workspace = true
 tracing.workspace = true
 tokio = { workspace = true, features = ["net", "io-util", "rt", "sync", "fs", "macros"] }
 tokio-rustls = { workspace = true }
-rustls-pemfile.workspace = true
+rustls-pki-types = { workspace = true }
 
 # MITM-specific dependencies
 rcgen = { version = "0.14", features = ["x509-parser"] }

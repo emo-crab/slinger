@@ -278,12 +278,25 @@ impl Certificate {
 
   #[cfg(feature = "rustls")]
   fn read_pem_certs(reader: &mut impl BufRead) -> crate::Result<Vec<Vec<u8>>> {
-    rustls_pemfile::certs(reader)
-      .map(|result| match result {
-        Ok(cert) => Ok(cert.as_ref().to_vec()),
-        Err(_) => Err(crate::errors::builder("invalid certificate encoding")),
-      })
-      .collect()
+    // Read all bytes from the reader and parse PEM sections using rustls-pki-types
+    use rustls_pki_types::pem::{PemObject, SectionKind};
+    let mut buf = Vec::new();
+    reader
+      .read_to_end(&mut buf)
+      .map_err(|_| crate::errors::builder("invalid certificate encoding"))?;
+
+    let mut certs: Vec<Vec<u8>> = Vec::new();
+    for item in <(SectionKind, Vec<u8>) as PemObject>::pem_slice_iter(&buf) {
+      match item {
+        Ok((kind, contents)) => {
+          if kind == SectionKind::Certificate {
+            certs.push(contents);
+          }
+        }
+        Err(_) => return Err(crate::errors::builder("invalid certificate encoding")),
+      }
+    }
+    Ok(certs)
   }
 }
 #[allow(dead_code)]
@@ -346,45 +359,47 @@ impl Identity {
   pub fn from_pem(buf: &[u8]) -> crate::Result<Identity> {
     #[cfg(feature = "rustls")]
     {
-      use rustls_pemfile::Item;
-      use std::io::Cursor;
-      let (key, certs) = {
-        let mut pem = Cursor::new(buf);
-        let mut sk = Vec::<rustls_pki_types::PrivateKeyDer>::new();
-        let mut certs = Vec::<rustls_pki_types::CertificateDer>::new();
-        for result in rustls_pemfile::read_all(&mut pem) {
-          match result {
-            Ok(Item::X509Certificate(cert)) => certs.push(cert),
-            Ok(Item::Pkcs1Key(key)) => sk.push(key.into()),
-            Ok(Item::Pkcs8Key(key)) => sk.push(key.into()),
-            Ok(Item::Sec1Key(key)) => sk.push(key.into()),
-            Ok(_) => {
-              return Err(crate::errors::builder(
-                tokio_rustls::rustls::Error::General(String::from(
-                  "No valid certificate was found",
-                )),
-              ))
+      use rustls_pki_types::pem::{PemObject, SectionKind};
+      use rustls_pki_types::{CertificateDer, PrivateKeyDer};
+
+      let mut certs = Vec::<CertificateDer<'static>>::new();
+      let mut keys = Vec::<PrivateKeyDer<'static>>::new();
+
+      // Read all PEM sections from the buffer
+      for item in <(SectionKind, Vec<u8>) as PemObject>::pem_slice_iter(buf) {
+        match item {
+          Ok((kind, contents)) => match kind {
+            SectionKind::Certificate => certs.push(CertificateDer::from(contents)),
+            SectionKind::RsaPrivateKey | SectionKind::PrivateKey | SectionKind::EcPrivateKey => {
+              // Try to parse the private key from the DER bytes
+              match PrivateKeyDer::try_from(contents) {
+                Ok(k) => keys.push(k),
+                Err(_) => {
+                  return Err(crate::errors::builder(tokio_rustls::rustls::Error::General(
+                    String::from("Invalid identity PEM file"),
+                  )))
+                }
+              }
             }
-            Err(_) => {
-              return Err(crate::errors::builder(
-                tokio_rustls::rustls::Error::General(String::from("Invalid identity PEM file")),
-              ))
-            }
+            _ => { /* ignore other PEM sections */ }
+          },
+          Err(_) => {
+            return Err(crate::errors::builder(tokio_rustls::rustls::Error::General(
+              String::from("Invalid identity PEM file"),
+            )))
           }
         }
-        if let (Some(sk), false) = (sk.pop(), certs.is_empty()) {
-          (sk, certs)
-        } else {
-          return Err(crate::errors::builder(
-            tokio_rustls::rustls::Error::General(String::from(
-              "private key or certificate not found",
-            )),
-          ));
-        }
-      };
-      Ok(Identity {
-        inner: ClientCert::RustlsPem { key, certs },
-      })
+      }
+
+      if let (Some(sk), false) = (keys.pop(), certs.is_empty()) {
+        Ok(Identity {
+          inner: ClientCert::RustlsPem { key: sk, certs },
+        })
+      } else {
+        Err(crate::errors::builder(tokio_rustls::rustls::Error::General(String::from(
+          "private key or certificate not found",
+        ))))
+      }
     }
     #[cfg(not(feature = "rustls"))]
     {

@@ -18,6 +18,7 @@ use time::{Duration, OffsetDateTime};
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
 use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer};
+use rustls_pki_types::pem::{PemObject, SectionKind};
 
 /// Certificate validity period in seconds (1 year)
 const TTL_SECS: i64 = 365 * 24 * 60 * 60;
@@ -90,10 +91,24 @@ impl CertificateAuthority {
     })?;
 
     // Parse PEM to DER for rustls
-    let cert_der = rustls_pemfile::certs(&mut cert_pem.as_bytes())
-      .next()
-      .ok_or_else(|| Error::certificate_error("No certificate found in PEM"))?
-      .map_err(|e| Error::certificate_error(format!("Failed to parse PEM: {}", e)))?;
+    // Use the PemObject implementation for (SectionKind, Vec<u8>) to iterate all PEM sections
+    let mut found: Option<Vec<u8>> = None;
+    for item in <(SectionKind, Vec<u8>) as PemObject>::pem_slice_iter(cert_pem.as_bytes()) {
+      match item {
+        Ok((kind, contents)) => {
+          if kind == SectionKind::Certificate {
+            found = Some(contents);
+            break;
+          }
+        }
+        Err(e) => {
+          return Err(Error::certificate_error(format!("Failed to parse PEM: {}", e)));
+        }
+      }
+    }
+
+    let cert_der_vec = found.ok_or_else(|| Error::certificate_error("No certificate found in PEM"))?;
+    let cert_der = CertificateDer::from(cert_der_vec);
 
     let key_der = PrivateKeyDer::try_from(issuer.key().serialize_der())
       .map_err(|_| Error::certificate_error("Failed to serialize CA key"))?;

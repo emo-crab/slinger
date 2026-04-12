@@ -1,6 +1,6 @@
 [package]
 name = "slinger"
-version = "0.2.13"
+version = "0.2.14"
 edition.workspace = true
 description = "An HTTP Client for Rust designed for hackers."
 homepage.workspace = true
@@ -25,7 +25,6 @@ mime = { version = "0.3.17", optional = true }
 cookie = { version = "0.18.1", optional = true }
 tokio-rustls = { workspace = true, optional = true }
 tokio = { workspace = true, features = ["net", "io-util", "time", "rt"] }
-rustls-pemfile = { workspace = true, optional = true }
 rustls-pki-types = { workspace = true, optional = true }
 rustls-native-certs = { workspace = true, optional = true }
 h2 = { version = "0.4", optional = true }
@@ -43,7 +42,7 @@ default = []
 # - `rustls`: Rustls TLS backend (requires `tls`)
 # Note: If `tls` is enabled without a backend, you must provide a custom TLS connector callback.
 tls = []
-rustls = ["tls", "tokio-rustls", "rustls-pemfile", "rustls-pki-types", "rustls-native-certs"]
+rustls = ["tls", "tokio-rustls", "rustls-pki-types", "rustls-native-certs"]
 http2 = ["dep:h2", "tls"]
 cookie = ["dep:cookie"]
 charset = ["dep:encoding_rs", "dep:mime"]
