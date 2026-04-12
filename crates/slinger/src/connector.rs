@@ -1,8 +1,8 @@
+#[cfg(feature = "dns")]
+use crate::dns::DnsResolver;
 use crate::errors::Result;
 use crate::proxy::{Proxy, ProxySocket};
 use crate::socket::{Socket, StreamWrapper};
-#[cfg(feature = "dns")]
-use crate::dns::DnsResolver;
 #[cfg(feature = "tls")]
 use crate::tls::{self, Certificate, CustomTlsConnector, Identity};
 use socket2::Socket as RawSocket;

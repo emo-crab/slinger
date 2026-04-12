@@ -11,6 +11,7 @@ use rcgen::{
   BasicConstraints, CertificateParams, DistinguishedName, DnType, IsCa, Issuer, KeyPair,
   KeyUsagePurpose, SanType,
 };
+use rustls_pki_types::pem::{PemObject, SectionKind};
 use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -18,7 +19,6 @@ use time::{Duration, OffsetDateTime};
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
 use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer};
-use rustls_pki_types::pem::{PemObject, SectionKind};
 
 /// Certificate validity period in seconds (1 year)
 const TTL_SECS: i64 = 365 * 24 * 60 * 60;
@@ -102,12 +102,16 @@ impl CertificateAuthority {
           }
         }
         Err(e) => {
-          return Err(Error::certificate_error(format!("Failed to parse PEM: {}", e)));
+          return Err(Error::certificate_error(format!(
+            "Failed to parse PEM: {}",
+            e
+          )));
         }
       }
     }
 
-    let cert_der_vec = found.ok_or_else(|| Error::certificate_error("No certificate found in PEM"))?;
+    let cert_der_vec =
+      found.ok_or_else(|| Error::certificate_error("No certificate found in PEM"))?;
     let cert_der = CertificateDer::from(cert_der_vec);
 
     let key_der = PrivateKeyDer::try_from(issuer.key().serialize_der())

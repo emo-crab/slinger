@@ -75,8 +75,8 @@ impl DnsResolver {
     let name_server_group = NameServerConfigGroup::from(name_servers);
     let config = ResolverConfig::from_parts(None, vec![], name_server_group);
 
-    let resolver = TokioResolver::builder_with_config(config, TokioConnectionProvider::default())
-      .build();
+    let resolver =
+      TokioResolver::builder_with_config(config, TokioConnectionProvider::default()).build();
 
     Ok(Self {
       inner: Arc::new(resolver),
@@ -122,10 +122,7 @@ impl DnsResolver {
       .await
       .map_err(|e| new_io_error(std::io::ErrorKind::Other, &e.to_string()))?;
 
-    let addrs: Vec<SocketAddr> = lookup
-      .iter()
-      .map(|ip| SocketAddr::new(ip, port))
-      .collect();
+    let addrs: Vec<SocketAddr> = lookup.iter().map(|ip| SocketAddr::new(ip, port)).collect();
 
     if addrs.is_empty() {
       return Err(new_io_error(

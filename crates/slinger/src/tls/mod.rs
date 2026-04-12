@@ -375,18 +375,18 @@ impl Identity {
               match PrivateKeyDer::try_from(contents) {
                 Ok(k) => keys.push(k),
                 Err(_) => {
-                  return Err(crate::errors::builder(tokio_rustls::rustls::Error::General(
-                    String::from("Invalid identity PEM file"),
-                  )))
+                  return Err(crate::errors::builder(
+                    tokio_rustls::rustls::Error::General(String::from("Invalid identity PEM file")),
+                  ))
                 }
               }
             }
             _ => { /* ignore other PEM sections */ }
           },
           Err(_) => {
-            return Err(crate::errors::builder(tokio_rustls::rustls::Error::General(
-              String::from("Invalid identity PEM file"),
-            )))
+            return Err(crate::errors::builder(
+              tokio_rustls::rustls::Error::General(String::from("Invalid identity PEM file")),
+            ))
           }
         }
       }
@@ -396,9 +396,11 @@ impl Identity {
           inner: ClientCert::RustlsPem { key: sk, certs },
         })
       } else {
-        Err(crate::errors::builder(tokio_rustls::rustls::Error::General(String::from(
-          "private key or certificate not found",
-        ))))
+        Err(crate::errors::builder(
+          tokio_rustls::rustls::Error::General(String::from(
+            "private key or certificate not found",
+          )),
+        ))
       }
     }
     #[cfg(not(feature = "rustls"))]

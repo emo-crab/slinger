@@ -7,8 +7,8 @@ use std::fmt;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
-use uuid::Uuid;
 use tokio::time::timeout;
+use uuid::Uuid;
 
 /// Generate a new unique session ID using UUID v4
 fn generate_session_id() -> u128 {
@@ -370,8 +370,8 @@ impl InterceptorHandler {
   }
 
   /// Create a new interceptor handler with a configurable per-interceptor timeout
-  pub fn with_timeout(mut self,timeout_secs: u64) -> Self {
-    self.timeout_secs=timeout_secs;
+  pub fn with_timeout(mut self, timeout_secs: u64) -> Self {
+    self.timeout_secs = timeout_secs;
     self
   }
 
@@ -401,7 +401,10 @@ impl InterceptorHandler {
         Ok(Err(e)) => return Err(e),     // Interceptor returned an error
         // Timeout -> skip this interceptor but continue processing
         Err(_) => {
-          tracing::warn!("Interceptor timed out after {}s; skipping", self.timeout_secs);
+          tracing::warn!(
+            "Interceptor timed out after {}s; skipping",
+            self.timeout_secs
+          );
           continue;
         }
       }
@@ -425,7 +428,10 @@ impl InterceptorHandler {
         Ok(Ok(None)) => return Ok(None), // Response blocked
         Ok(Err(e)) => return Err(e),     // Interceptor error
         Err(_) => {
-          tracing::warn!("Interceptor timed out after {}s; skipping", self.timeout_secs);
+          tracing::warn!(
+            "Interceptor timed out after {}s; skipping",
+            self.timeout_secs
+          );
           continue;
         }
       }
@@ -512,4 +518,3 @@ impl Interceptor for LoggingInterceptor {
     Ok(Some(response))
   }
 }
-

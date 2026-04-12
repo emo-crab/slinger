@@ -286,10 +286,7 @@ impl ProxyServer {
     Self::handle_http_connection(stream, ctx).await
   }
 
-  async fn handle_socks5_connection(
-    mut stream: TcpStream,
-    ctx: ConnectionContext,
-  ) -> Result<()> {
+  async fn handle_socks5_connection(mut stream: TcpStream, ctx: ConnectionContext) -> Result<()> {
     use crate::socks5::Socks5Server;
 
     // Handle as SOCKS5 - we already consumed the version byte.
@@ -358,24 +355,25 @@ impl ProxyServer {
   async fn peek_tls_client_hello(stream: &TcpStream, protocol_tag: &str) -> bool {
     // A TLS ClientHello is client-first and starts with TLS record prefix 0x16 0x03.
     let mut peek_buf = [0u8; 5];
-    let peeked = match tokio::time::timeout(Duration::from_millis(100), stream.peek(&mut peek_buf)).await {
-      Ok(Ok(n)) => n,
-      Ok(Err(e)) => {
-        tracing::debug!(
-          "[MITM {}] Peek failed, defaulting to TCP tunnel: {}",
-          protocol_tag,
-          e
-        );
-        0
-      }
-      Err(_) => {
-        tracing::debug!(
-          "[MITM {}] Peek timed out, defaulting to TCP tunnel",
-          protocol_tag
-        );
-        0
-      }
-    };
+    let peeked =
+      match tokio::time::timeout(Duration::from_millis(100), stream.peek(&mut peek_buf)).await {
+        Ok(Ok(n)) => n,
+        Ok(Err(e)) => {
+          tracing::debug!(
+            "[MITM {}] Peek failed, defaulting to TCP tunnel: {}",
+            protocol_tag,
+            e
+          );
+          0
+        }
+        Err(_) => {
+          tracing::debug!(
+            "[MITM {}] Peek timed out, defaulting to TCP tunnel",
+            protocol_tag
+          );
+          0
+        }
+      };
 
     Self::is_tls_client_hello(&peek_buf[..peeked])
   }
@@ -392,7 +390,6 @@ impl ProxyServer {
   fn is_tls_client_hello(bytes: &[u8]) -> bool {
     bytes.len() >= 2 && bytes[0] == 0x16 && bytes[1] == 0x03
   }
-
 
   /// Accept TLS on an incoming stream (using certs from CertificateManager) and handle HTTPS requests over it.
   /// If `send_response` is true, send an HTTP/1.1 200 Connection Established before performing the TLS handshake
@@ -675,7 +672,11 @@ impl ProxyServer {
 
     // Fix relative URI to be absolute (e.g., /path -> https://domain/path)
     if request.uri().host().is_none() {
-      let pq = request.uri().path_and_query().map(|pq| pq.as_str()).unwrap_or("/");
+      let pq = request
+        .uri()
+        .path_and_query()
+        .map(|pq| pq.as_str())
+        .unwrap_or("/");
       let absolute_uri = format!("https://{}{}", domain, pq)
         .parse::<http::Uri>()
         .map_err(|e| Error::invalid_request(format!("Invalid URI: {}", e)))?;
@@ -741,5 +742,4 @@ impl ProxyServer {
 
     Ok((host, port))
   }
-
 }

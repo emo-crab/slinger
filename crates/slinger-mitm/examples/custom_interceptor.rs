@@ -11,9 +11,7 @@
 
 use async_trait::async_trait;
 use http::HeaderValue;
-use slinger_mitm::{
-  Interceptor, MitmConfig, MitmProxy, MitmRequest, MitmResponse, Result,
-};
+use slinger_mitm::{Interceptor, MitmConfig, MitmProxy, MitmRequest, MitmResponse, Result};
 use std::sync::Arc;
 
 /// Unified custom interceptor that handles both requests and responses
@@ -116,7 +114,6 @@ impl Interceptor for CustomHeaderInterceptor {
     Ok(Some(response))
   }
 }
-
 
 #[tokio::main]
 async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {

@@ -19,7 +19,9 @@
 //! - Using session_id to correlate requests and responses
 
 use async_trait::async_trait;
-use slinger_mitm::{Interceptor, InterceptorFactory, MitmConfig, MitmProxy, MitmRequest, MitmResponse, Result};
+use slinger_mitm::{
+  Interceptor, InterceptorFactory, MitmConfig, MitmProxy, MitmRequest, MitmResponse, Result,
+};
 use std::sync::Arc;
 
 /// Custom interceptor that logs and optionally modifies requests/responses

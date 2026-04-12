@@ -14,9 +14,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
   use slinger::dns::DnsResolver;
   use slinger::Client;
   // Create a DNS resolver with Google's public DNS servers
-  let resolver = DnsResolver::new(vec![
-    "10.111.13.99:53".parse().unwrap(),
-  ])?;
+  let resolver = DnsResolver::new(vec!["10.111.13.99:53".parse().unwrap()])?;
 
   // Create a client with the custom DNS resolver
   let client = Client::builder().dns_resolver(resolver).build()?;

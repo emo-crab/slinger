@@ -346,7 +346,11 @@ async fn test_unified_interceptor_handler() {
   );
 
   // Test with a raw TCP response using the same session_id
-  let response = MitmResponse::raw_tcp(session_id, "example.com:443", Bytes::from("Hello from server!"));
+  let response = MitmResponse::raw_tcp(
+    session_id,
+    "example.com:443",
+    Bytes::from("Hello from server!"),
+  );
   assert_eq!(response.source(), "example.com:443");
   assert_eq!(response.session_id(), session_id);
   assert_eq!(response.body().map(|b| b.len()).unwrap_or(0), 18);

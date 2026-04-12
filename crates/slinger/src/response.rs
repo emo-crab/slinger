@@ -1121,4 +1121,3 @@ mod tests {
     assert!(!raw.contains("content-length: 999\r\n"));
   }
 }
-
