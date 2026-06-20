@@ -456,10 +456,7 @@ impl Client {
     }
     let mut last_response = records
       .last()
-      .ok_or(new_io_error(
-        std::io::ErrorKind::NotFound,
-        "not found record",
-      ))?
+      .ok_or_else(|| new_io_error(std::io::ErrorKind::NotFound, "not found record"))?
       .response
       .clone();
     last_response.extensions_mut().insert(records);

@@ -26,6 +26,10 @@ pub enum Error {
   /// Unknown Error
   #[error("other")]
   Other(String),
+  #[cfg(feature = "dns")]
+  /// DNSNet error
+  #[error(transparent)]
+  DNSNet(#[from] hickory_resolver::net::NetError),
 }
 
 #[derive(ThisError, Debug)]

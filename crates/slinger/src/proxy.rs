@@ -120,10 +120,9 @@ impl Proxy {
   }
 }
 fn uri_to_host_addr(uri: &http::Uri) -> Result<(String, SocketAddr)> {
-  let host = uri.host().ok_or(new_io_error(
-    std::io::ErrorKind::InvalidData,
-    "url not host",
-  ))?;
+  let host = uri
+    .host()
+    .ok_or_else(|| new_io_error(std::io::ErrorKind::InvalidData, "url not host"))?;
   let to_addr = || {
     let port = match uri.port_u16() {
       None => match uri.scheme_str() {
@@ -134,14 +133,18 @@ fn uri_to_host_addr(uri: &http::Uri) -> Result<(String, SocketAddr)> {
       },
       Some(p) => Some(p),
     }
-    .ok_or(new_io_error(
-      std::io::ErrorKind::InvalidData,
-      "no port in url",
-    ))?;
-    (host, port).to_socket_addrs()?.next().ok_or(new_io_error(
-      std::io::ErrorKind::InvalidData,
-      "no addr in url",
-    ))
+    .ok_or_else(|| {
+      new_io_error(
+        std::io::ErrorKind::InvalidData,
+        &format!("No port in URL: {:?}", uri),
+      )
+    })?;
+    (host, port).to_socket_addrs()?.next().ok_or_else(|| {
+      new_io_error(
+        std::io::ErrorKind::InvalidData,
+        &format!("No port in URL: {:?}", uri),
+      )
+    })
   };
   Ok((host.to_string(), to_addr()?))
 }
@@ -331,10 +334,13 @@ impl ProxySocket {
     let mut socket = connector.connect_with_addr(addr).await?;
     match &self.proxy {
       None => {
-        let _target_host = self.target.host().ok_or(new_io_error(
-          std::io::ErrorKind::InvalidData,
-          "no host in url",
-        ))?;
+        let _target_host = self.target.host().ok_or_else(|| {
+          let err = new_io_error(
+            std::io::ErrorKind::InvalidData,
+            &format!("Target URL missing host: {}", self.target),
+          );
+          err
+        })?;
         #[cfg(feature = "tls")]
         if self.target.scheme() == Some(&http::uri::Scheme::HTTPS) {
           socket = connector.upgrade_to_tls(socket, _target_host).await?;
@@ -342,10 +348,12 @@ impl ProxySocket {
         Ok(socket)
       }
       Some(proxy) => {
-        let target_host = self.target.host().ok_or(new_io_error(
-          std::io::ErrorKind::InvalidData,
-          "no host in url",
-        ))?;
+        let target_host = self.target.host().ok_or_else(|| {
+          new_io_error(
+            std::io::ErrorKind::InvalidData,
+            &format!("Target URL missing host: {}", self.target),
+          )
+        })?;
         let port = match self.target.port() {
           Some(p) => p.as_u16(),
           None => {
@@ -389,14 +397,19 @@ impl ProxySocket {
     // 获取连接地址，如果有代理先返回代理地址
     match &self.proxy {
       None => {
-        let original_host = self.target.host().ok_or(new_io_error(
-          std::io::ErrorKind::InvalidData,
-          "no host in url",
-        ))?;
-        let port = default_port(&self.target).ok_or(new_io_error(
-          std::io::ErrorKind::InvalidData,
-          "no port in url",
-        ))?;
+        let original_host = self.target.host().ok_or_else(|| {
+          let err = new_io_error(
+            std::io::ErrorKind::InvalidData,
+            &format!("Target URL missing host: {:?}", self.target),
+          );
+          err
+        })?;
+        let port = default_port(&self.target).ok_or_else(|| {
+          new_io_error(
+            std::io::ErrorKind::InvalidData,
+            &format!("No port in URL: {:?}", self.target),
+          )
+        })?;
         // Use custom DNS resolver if available
         #[cfg(feature = "dns")]
         if let Some(resolver) = &self.dns_resolver {
@@ -406,10 +419,7 @@ impl ProxySocket {
         let target_addr = (original_host, port)
           .to_socket_addrs()?
           .next()
-          .ok_or(new_io_error(
-            std::io::ErrorKind::InvalidData,
-            "no addr in url",
-          ))?;
+          .ok_or_else(|| new_io_error(std::io::ErrorKind::InvalidData, "no addr in url"))?;
         Ok(target_addr)
       }
       Some(proxy) => {
@@ -734,24 +744,21 @@ impl From<&AuthenticationMethod> for u8 {
 
 impl TargetAddr {
   pub fn from_uri(value: &http::Uri, remote_dns: bool) -> Result<Self> {
-    let port = default_port(value).ok_or(new_io_error(
-      std::io::ErrorKind::InvalidData,
-      "not found port",
-    ))?;
-    let host = value.host().ok_or(new_io_error(
-      std::io::ErrorKind::InvalidData,
-      "not found host",
-    ))?;
+    let port = default_port(value)
+      .ok_or_else(|| new_io_error(std::io::ErrorKind::InvalidData, "not found port"))?;
+    let host = value
+      .host()
+      .ok_or_else(|| new_io_error(std::io::ErrorKind::InvalidData, "not found host"))?;
     if let Ok(ip) = IpAddr::from_str(host) {
       Ok(TargetAddr::IP(SocketAddr::new(ip, port)))
     } else {
       // 如果是使用远程DNS直接传域名过去让远程代理那边解析DNS，不是就本地解析到IP
       if !remote_dns {
         Ok(TargetAddr::IP(
-          (host, port).to_socket_addrs()?.next().ok_or(new_io_error(
-            std::io::ErrorKind::InvalidData,
-            "url not addr",
-          ))?,
+          (host, port)
+            .to_socket_addrs()?
+            .next()
+            .ok_or_else(|| new_io_error(std::io::ErrorKind::InvalidData, "url not addr"))?,
         ))
       } else {
         Ok(TargetAddr::Domain(host.to_string(), port))

@@ -12,8 +12,8 @@
 //! # async fn example() -> Result<(), slinger::Error> {
 //! // Create a resolver with custom DNS servers
 //! let resolver = DnsResolver::new(vec![
-//!     "8.8.8.8:53".parse().unwrap(),
-//!     "8.8.4.4:53".parse().unwrap(),
+//!     "8.8.8.8".parse().unwrap(),
+//!     "8.8.4.4".parse().unwrap(),
 //! ])?;
 //!
 //! // Resolve a hostname
@@ -23,11 +23,10 @@
 //! ```
 
 use crate::errors::{new_io_error, Result};
-use hickory_resolver::config::{NameServerConfig, NameServerConfigGroup, ResolverConfig};
-use hickory_resolver::name_server::TokioConnectionProvider;
-use hickory_resolver::proto::xfer::Protocol;
+use hickory_resolver::config::{NameServerConfig, ResolverConfig};
+use hickory_resolver::net::runtime::TokioRuntimeProvider;
 use hickory_resolver::TokioResolver;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 
 /// A DNS resolver that can use custom DNS servers.
@@ -54,12 +53,12 @@ impl DnsResolver {
   ///
   /// # fn example() -> Result<(), slinger::Error> {
   /// let resolver = DnsResolver::new(vec![
-  ///     "8.8.8.8:53".parse().unwrap(),
+  ///     "8.8.8.8".parse().unwrap(),
   /// ])?;
   /// # Ok(())
   /// # }
   /// ```
-  pub fn new(dns_servers: Vec<SocketAddr>) -> Result<Self> {
+  pub fn new(dns_servers: Vec<IpAddr>) -> Result<Self> {
     if dns_servers.is_empty() {
       return Err(new_io_error(
         std::io::ErrorKind::InvalidInput,
@@ -69,14 +68,13 @@ impl DnsResolver {
 
     let name_servers: Vec<NameServerConfig> = dns_servers
       .into_iter()
-      .map(|addr| NameServerConfig::new(addr, Protocol::Udp))
+      .map(NameServerConfig::udp_and_tcp)
       .collect();
 
-    let name_server_group = NameServerConfigGroup::from(name_servers);
-    let config = ResolverConfig::from_parts(None, vec![], name_server_group);
+    let config = ResolverConfig::from_parts(None, vec![], name_servers);
 
     let resolver =
-      TokioResolver::builder_with_config(config, TokioConnectionProvider::default()).build();
+      TokioResolver::builder_with_config(config, TokioRuntimeProvider::default()).build()?;
 
     Ok(Self {
       inner: Arc::new(resolver),
@@ -98,8 +96,7 @@ impl DnsResolver {
   pub fn system() -> Result<Self> {
     let resolver = TokioResolver::builder_tokio()
       .map_err(|e| new_io_error(std::io::ErrorKind::Other, &e.to_string()))?
-      .build();
-
+      .build()?;
     Ok(Self {
       inner: Arc::new(resolver),
     })
