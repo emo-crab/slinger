@@ -15,7 +15,7 @@ http.workspace = true
 socket2.workspace = true
 bytes.workspace = true
 tracing.workspace = true
-base64 = "0.22"
+base64 = "0.23"
 percent-encoding = "2.1"
 flate2 = { version = "1.0", default-features = false, features = ["default"], optional = true }
 serde = { version = "1", features = ["derive"], optional = true }
